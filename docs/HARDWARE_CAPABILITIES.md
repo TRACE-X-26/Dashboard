@@ -7,7 +7,7 @@ This document combines the existing Fritzing inspection with the target platform
 | Component | Intended role | Evidence | Status |
 |---|---|---|---|
 | Raspberry Pi 5 | FastAPI, UI hosting, storage, reports | Present in design; no deployment test | **IMPLEMENTED_UNVERIFIED** |
-| STM32 Nucleo-F401RE | Real-time control, acquisition, safety | Named target; no firmware in repository | **UNSUPPORTED** |
+| STM32 Nucleo-F401RE | Real-time control, acquisition, safety | CubeIDE project and communication-only firmware in repository | **IMPLEMENTED_UNVERIFIED** |
 | Cytron MD10C R2 | Brushed DC motor PWM/direction | Present in Fritzing; no physical validation | **PLANNED** |
 | 3–12 V DC motor | Primary diagnostic device | Present in Fritzing; specifications not recorded | **PLANNED** |
 | 12 V / 5 A bench supply | Main power | Present in Fritzing | **PLANNED** |
@@ -23,18 +23,20 @@ No row is **VERIFIED** because no physical test evidence is stored in the reposi
 
 ## Existing STM32CubeIDE configuration discovered October 14, 2026
 
-The authoritative project is `/Users/markussanford/ADS`. Its current `.ioc`
+The authoritative project is `ADS/` in this repository. Its current `.ioc`
 configures only USART2, board LED/button GPIO, and debug pins. USART2 uses PA2
-TX and PA3 RX; generated firmware runs it at 115200 8-N-1 with no flow control.
-The firmware transmits an ASCII connectivity banner once per second but does
-not receive commands. ADC, I²C, timers/PWM, RPM capture, watchdog, motor
-direction, and sensor acquisition are not configured. See
+TX and PA3 RX; generated initialization runs it at 115200 8-N-1 with no flow
+control. The firmware now parses the safe subset of the Raspberry Pi protocol,
+but it has not been flashed or exercised on a board. ADC, I²C, timers/PWM, RPM
+capture, watchdog, motor direction, and sensor acquisition remain unconfigured. See
 `STM32_FIRMWARE_AUDIT.md` for exact evidence.
 
 ## Supported claims today
 
 - The software can generate and process simulated voltage, current, power, temperature, RPM, resistance, and vibration values.
 - The software can simulate PWM/direction commands and safety interlocks.
+- The STM32 communication-only source builds and responds to status,
+  capabilities, faults, and heartbeat in host tests.
 - These are software demonstrations only and must be labeled `SIMULATION`.
 
 ## Capabilities that may be enabled after verification
@@ -48,7 +50,8 @@ direction, and sensor acquisition are not configured. See
 | External DC voltage | ADC pin/reference, divider values/tolerance, clamp behavior, maximum safe input, and calibration verified |
 | Hardware emergency stop | Physical circuit interrupts energy independently of Pi/STM32 software |
 
-None of these hardware capabilities are exposed by the current firmware.
+None of these physical hardware capabilities are exposed by the current
+firmware. Only read-only communication metadata is implemented.
 
 ## Unsupported capabilities
 
@@ -63,14 +66,14 @@ Unsupported fields must be `null`/`UNAVAILABLE`, not simulated, whenever the app
 
 ## Required wiring decisions before firmware
 
-1. Record the exact Nucleo-F401RE pin for MD10C PWM and timer channel.
-2. Record the direction GPIO and its safe reset state.
+1. Physically verify the proposed MD10C PWM mapping: D6 / PB10 / TIM2_CH3.
+2. Physically verify the proposed direction mapping: D7 / PA8 and its safe reset state.
 3. Confirm MD10C revision, sign-magnitude mode, and 3.3 V input compatibility.
 4. Record both INA219 addresses and maximum safe current/shunt power.
-5. Record I2C pins, pull-ups, bus voltage, and ownership.
-6. Record DS18B20 pin and pull-up placement.
-7. Record relay inputs, active polarity, and loads.
-8. Record ADC pin, reference, divider tolerance, and maximum probe input.
+5. Verify A4/A5 solder-bridge routing to PB9/PB8 for I2C, pull-ups, bus voltage, and ownership.
+6. Verify DS18B20 D2 / PA10 and pull-up placement.
+7. Verify relay D4 / PB5 and D5 / PB4 inputs, active polarity, and loads.
+8. Verify voltage-probe A0 / PA0, reference, divider tolerance, and maximum input.
 9. Record fuse ratings, wire gauges, supply current limit, and motor stall current.
 10. Demonstrate that the kill switch removes motor energy independently.
 

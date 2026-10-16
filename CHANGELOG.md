@@ -4,6 +4,18 @@ All notable project changes should be recorded here. Hardware verification is tr
 
 ## Unreleased
 
+### Added — Phase 3 communication-only STM32 firmware, October 14, 2026
+
+- Imported the existing NUCLEO-F401RE STM32CubeIDE project without regenerating CubeMX files.
+- Added a fixed-buffer protocol module for status, capabilities, faults, heartbeat, acknowledgments, and explicit errors.
+- Preserved the existing USART2 PA2/PA3 configuration and integrated only through CubeMX user-code regions.
+- Retained the legacy banner behind a disabled compile-time switch.
+- Kept measurements and every motor-control command explicitly disabled.
+- Added native host compilation tests using frames produced by the production Python encoder and responses validated by its decoder.
+- Completed a clean STM32CubeIDE Debug build with zero errors and zero warnings.
+- Documented the clock investigation, exact compatibility changes, staged integration plan, and remaining hardware gates.
+- Recovered the intended Nucleo header-to-peripheral mapping from the original Fritzing netlist and cross-referenced it with the NUCLEO-F401RE pinout; all mappings remain physically unverified.
+
 ### Added — Phase 2 STM32 communication boundary, October 14, 2026
 
 - Audited the existing NUCLEO-F401RE CubeMX configuration and generated HAL firmware without modifying either one.

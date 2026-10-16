@@ -1,5 +1,8 @@
 # Phase 2 Communication Review and Manual Test Checklist
 
+> Historical Phase 2 snapshot. Phase 3 subsequently added communication-only
+> STM32 protocol source; see `PHASE_3_REVIEW.md` for current firmware status.
+
 **Status:** Raspberry Pi interface and simulation adapter complete; firmware protocol and physical hardware unverified  
 **Firmware changed:** No  
 **Physical serial port opened automatically:** No

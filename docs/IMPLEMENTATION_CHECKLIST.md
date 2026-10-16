@@ -30,18 +30,31 @@ Status values: `TODO`, `IN PROGRESS`, `SOFTWARE PASS`, `HARDWARE VERIFIED`, `BLO
 - [x] Record actual USB serial settings and pin assignments — **SOFTWARE PASS**
 - [x] Define versioned status/measurement/command/error protocol — **SOFTWARE PASS**
 - [x] Implement bounded timeouts and correlated responses — **SOFTWARE PASS**
-- [x] Implement safe serial disconnection — **SOFTWARE PASS; PHYSICAL FIRMWARE NOT COMPATIBLE YET**
+- [x] Implement safe serial disconnection — **SOFTWARE PASS; PHYSICAL LINK NOT VERIFIED YET**
 - [x] Implement simulation adapter — **SOFTWARE PASS**
 - [x] Keep hardware mode and motor output disabled — **SOFTWARE PASS**
 - [x] Add protocol and adapter tests — **SOFTWARE PASS (46/46 total backend tests)**
-- [ ] Implement protocol in STM32 firmware — **BLOCKED: pin/electrical/safety review**
-- [ ] Exercise protocol over physical USB serial — **BLOCKED: compatible firmware and hardware authorization**
+- [x] Implement safe protocol subset in STM32 firmware — **SOFTWARE PASS; MOTOR/MEASUREMENT COMMANDS DISABLED**
+- [ ] Exercise protocol over physical USB serial — **BLOCKED: board flash and motor-power-disconnected test**
+
+## Phase 3 — communication-only STM32 firmware
+
+- [x] Import and inspect complete CubeIDE project — **SOFTWARE PASS**
+- [x] Preserve `.ioc`, generated initialization, pins, and project metadata — **SOFTWARE PASS**
+- [x] Investigate HSE/HSI configuration evidence — **SOFTWARE PASS; REGENERATION BLOCKED PENDING EXPLICIT CLOCK DECISION**
+- [x] Add bounded JSON-line receive/parser module — **SOFTWARE PASS**
+- [x] Add status, capabilities, faults, heartbeat, and correlated errors — **SOFTWARE PASS**
+- [x] Reject measurements and all motor commands — **SOFTWARE PASS**
+- [x] Validate C responses using production Python decoder — **SOFTWARE PASS**
+- [x] Clean STM32CubeIDE Debug build — **SOFTWARE PASS; 0 ERRORS, 0 WARNINGS**
+- [ ] Flash communication-only image — **NOT ATTEMPTED; USER HARDWARE STEP**
+- [ ] Verify USB protocol on Nucleo with motor power disconnected — **HARDWARE UNVERIFIED**
 
 ## Hardware readiness
 
 - [x] Existing STM32 pin/configuration audit — **SOFTWARE PASS; PA2/PA3 USART2, PA5 LD2, PC13 button recorded**
 - [ ] Final MD10C/sensor pin map — **BLOCKED: not present in `.ioc`; wiring verification required**
-- [ ] STM32 command/measurement firmware — **BLOCKED: current firmware only transmits a legacy banner**
+- [ ] STM32 command/measurement firmware — **PARTIAL: safe communication commands implemented; measurements/control blocked**
 - [x] Mock serial protocol — **SOFTWARE PASS**
 - [ ] Physical e-stop evidence — **BLOCKED: hardware**
 - [ ] Sensor calibration evidence — **BLOCKED: hardware**

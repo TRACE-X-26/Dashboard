@@ -1,82 +1,128 @@
 # STM32 Firmware and `.ioc` Audit
 
-**Inspected:** October 14, 2026  
-**Project:** `/Users/markussanford/ADS`  
-**Board:** NUCLEO-F401RE / STM32F401RET6  
-**Firmware modification during this phase:** None
+**Inspected:** October 14, 2026
 
-## Authoritative files inspected
+**Project:** `ADS/` in this repository
 
-- `ADS.ioc`
-- `Core/Src/main.c`
-- `Core/Inc/main.h`
-- `Core/Src/stm32f4xx_hal_msp.c`
-- `Core/Inc/stm32f4xx_hal_conf.h`
-- STM32CubeIDE project metadata and F401RE linker scripts
+**Board:** NUCLEO-F401RE / STM32F401RET6
 
-The application repository did not contain firmware. The existing STM32CubeIDE project was found separately at `/Users/markussanford/ADS` and was treated as read-only.
+**Cube firmware package:** STM32Cube FW_F4 V1.28.3
 
-## Actual configured peripherals
+**CubeMX version recorded by project:** 6.18.1
+
+## Preservation scope
+
+The complete CubeIDE project was inspected before source changes. `ADS.ioc`,
+CubeIDE metadata, startup code, linker scripts, generated initialization
+functions, HAL drivers, and existing pin assignments were not regenerated or
+rewritten. The communication integration adds two application files and touches
+only `USER CODE` regions in `Core/Src/main.c`.
+
+Machine-specific `TraceX.app`, transient drawing files, and generated
+`Debug/`/`Release/` outputs are excluded from Git. This does not affect opening
+or rebuilding the project in STM32CubeIDE.
+
+The imported `ADS Debug.launch` file still contains its original absolute
+ST-LINK log path (`/Users/markussanford/ADS/Debug/...`). It is not used by the
+build. If debugging from the repository copy, create or update the local launch
+configuration in STM32CubeIDE so its log/output path points at the active
+workspace; this metadata was left unchanged during source integration.
+
+## Existing generated configuration
 
 | Peripheral | Configuration | Status |
 |---|---|---|
-| USART2 | Asynchronous TX/RX on PA2/PA3 | **IMPLEMENTED_UNVERIFIED** |
-| GPIO PA5 | Nucleo LD2 green LED, push-pull output | **IMPLEMENTED_UNVERIFIED** |
-| GPIO PC13 | Nucleo B1 pushbutton, falling-edge interrupt mode | **IMPLEMENTED_UNVERIFIED** |
-| SWD/SWO | PA13, PA14, PB3 | Debug configuration |
+| USART2 | Asynchronous TX/RX on PA2/PA3 | **IMPLEMENTED; BUILD VERIFIED, HARDWARE UNVERIFIED** |
+| GPIO PA5 | Nucleo LD2 green LED, push-pull output low | **UNCHANGED** |
+| GPIO PC13 | Nucleo B1 pushbutton, falling-edge mode | **UNCHANGED** |
+| SWD/SWO | PA13, PA14, PB3 | **UNCHANGED DEBUG INTERFACE** |
 | ADC | Not configured; HAL module disabled | **UNSUPPORTED** |
 | I²C | Not configured; HAL module disabled | **UNSUPPORTED** |
 | Timer/PWM | Not configured; HAL timer module disabled | **UNSUPPORTED** |
 | RPM input/capture | Not configured | **UNSUPPORTED** |
 | Relay outputs | Not configured | **UNSUPPORTED** |
-| Watchdog | Not configured | **UNSUPPORTED** |
+| Hardware watchdog | Not configured | **UNSUPPORTED** |
+
+There is no assigned MD10C PWM pin or direction pin. The communication-only
+firmware does not initialize or write any prospective motor pin.
 
 ## Actual pin map
 
-| STM32 pin | `.ioc` label/function | Existing use |
+| STM32 pin | `.ioc` label/function | Current use |
 |---|---|---|
-| PA2 | `USART_TX` / USART2_TX | STM32-to-ST-LINK virtual COM transmit |
-| PA3 | `USART_RX` / USART2_RX | ST-LINK virtual COM-to-STM32 receive; firmware does not read it |
-| PA5 | `LD2 [Green Led]` | Initialized low; no application behavior |
-| PC13 | `B1 [Blue PushButton]` | Configured input/EXTI; no application handler behavior |
+| PA2 | `USART_TX` / USART2_TX | STM32 to ST-LINK virtual COM transmit |
+| PA3 | `USART_RX` / USART2_RX | ST-LINK virtual COM to STM32 receive |
+| PA5 | `LD2 [Green Led]` | Initialized low; no protocol behavior |
+| PC13 | `B1 [Blue PushButton]` | Configured input/EXTI; no application handler |
 | PA13 | TMS/SWDIO | Debug |
 | PA14 | TCK/SWCLK | Debug |
 | PB3 | SWO | Debug trace |
 
-There is currently **no assigned PWM pin and no assigned MD10C direction pin**. No pin should be selected from the Fritzing image or earlier proposals without updating and reviewing `ADS.ioc`.
+## USART2 implementation comparison
 
-## Serial configuration
+Generated USART2 settings match the Raspberry Pi transport:
 
-The generated `MX_USART2_UART_Init` function is authoritative for runtime serial settings:
+- 115200 baud, 8 data bits, no parity, 1 stop bit
+- no hardware flow control
+- 16x oversampling
+- PA2/PA3, AF7, alternate-function push-pull
+- Nucleo ST-LINK virtual COM connection
 
-- USART: USART2
-- Baud: 115200
-- Data bits: 8
-- Parity: none
-- Stop bits: 1
-- Hardware flow control: none
-- Oversampling: 16
-- GPIO mode: alternate-function push-pull, AF7
-- Transfer implementation: blocking `HAL_UART_Transmit`
-- Receive interrupt/DMA: not implemented
+The original main loop used blocking `HAL_UART_Transmit` to send
+`STM32 CONNECTED TO PI\r\n` once per second and never called a receive API. The
+Phase 2 backend expects newline-delimited JSON request/response frames, so the
+plain-text loop could not interoperate with it.
 
-On the Nucleo board this USART is connected through the ST-LINK virtual COM port. A typical Raspberry Pi device path is `/dev/ttyACM0`, but the actual enumerated path must be confirmed using the Pi, not assumed.
+The integration retains the original banner path behind
+`ADS_PROTOCOL_LEGACY_BANNER_ENABLED`, defaulting to `0`. The default path polls
+USART2 one byte at a time with a 1 ms bound, assembles a bounded line, and passes
+it to the hardware-independent protocol module. UART pin and initialization code
+are unchanged.
 
-## Existing application behavior
+## Clock investigation
 
-The main loop sends the following ASCII line once per second:
+The runtime clock path is unambiguous in both `Core/Src/main.c` and the prior
+compiled listing:
 
-```text
-STM32 CONNECTED TO PI\r\n
-```
+- HSI = 16 MHz is enabled.
+- PLL source = HSI.
+- PLLM=16, PLLN=336, PLLP=4, PLLQ=7.
+- SYSCLK/HCLK = 84 MHz, APB1 = 42 MHz, APB2 = 84 MHz.
 
-It does not parse incoming bytes, emit JSON, acknowledge commands, publish measurements, or control the motor. The new backend includes a bounded `probe_legacy_banner()` operation to recognize this exact line without transmitting anything.
+The `.ioc` also records the 84/42/84 MHz derived values, but reserves PH0/PH1 as
+an external HSE clock source. It does not serialize explicit `RCC.PLLSource` or
+`PLLM` fields. That can represent an unused HSE pin reservation with the default
+HSI PLL choice, or stale clock metadata; the file alone cannot distinguish the
+two. The generated source is newer than the `.ioc` and the previous ELF listing
+matches the HSI implementation.
 
-## Configuration discrepancy
+Decision: keep the known generated HSI clock code unchanged. Before any future
+CubeMX regeneration, open Clock Configuration and explicitly choose whether HSI
+or the Nucleo ST-LINK MCO/HSE bypass is authoritative, save the `.ioc`, inspect
+the generated diff, and recheck USART2 baud on hardware. Do not switch clock
+sources as part of communication or motor work.
 
-`ADS.ioc` records an external HSE clock source and 84 MHz derived clock values, while the generated `SystemClock_Config()` in `main.c` selects HSI as the PLL source. This suggests the generated code and `.ioc` clock selection may not be synchronized. Do not regenerate code until this discrepancy is reviewed, because regeneration could alter working clock behavior.
+## Communication integration status
 
-## Preservation decision
+`Core/Inc/ads_protocol.h` and `Core/Src/ads_protocol.c` implement the safe subset
+of protocol version 1. Supported now:
 
-The firmware was not edited because it lacks all motor/sensor capabilities required by the target protocol. Adding command parsing before pin selection, watchdog design, motor-power protection, and sensor wiring verification would create unjustified control risk. The Raspberry Pi implementation is tested against a simulation adapter until a separate firmware phase is approved.
+- `GET_STATUS`
+- `GET_CAPABILITIES`
+- `GET_FAULTS`
+- heartbeat request/acknowledgment
+- correlated error responses
+- bounded 512-byte receive frames
+- a 2000 ms communication-age safety state
 
+The firmware explicitly rejects measurement requests and every motor command.
+It advertises no measurement types and reports `hardware_control:false`, PWM 0,
+and direction `UNCONFIGURED`.
+
+## Build evidence
+
+STM32CubeIDE 14.3 ARM GCC completed a clean headless Debug build with zero errors
+and zero warnings. The resulting image used 16,276 bytes of flash text/data and
+2,516 bytes of BSS (18,884 bytes total reported by `arm-none-eabi-size`). This is
+compile evidence only; the image was not flashed and no hardware behavior was
+verified.

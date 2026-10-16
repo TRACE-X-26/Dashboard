@@ -68,7 +68,15 @@ emergency stop, and safe-loss-of-communication behavior pass the documented
 checks.
 
 See [the firmware audit](docs/STM32_FIRMWARE_AUDIT.md), [serial protocol](docs/SERIAL_PROTOCOL.md),
+[firmware integration plan](docs/STM32_INTEGRATION_PLAN.md),
 [hardware verification plan](docs/HARDWARE_VERIFICATION.md), and [Phase 2 review guide](docs/PHASE_2_REVIEW.md).
+
+The existing STM32CubeIDE project is stored in `ADS/`. Its current incremental
+firmware implements only safe protocol parsing and read-only status operations.
+It builds successfully in STM32CubeIDE, but has not been flashed or verified on
+hardware. Generated build output and the local `TraceX.app` bundle are excluded
+from Git; the CubeIDE project metadata, source, HAL/CMSIS dependencies, startup
+code, linker scripts, and `.ioc` remain available for normal MacBook use.
 
 The backend provides REST endpoints for profiles and history plus a WebSocket
 endpoint for live diagnostic tests. The frontend includes the system dashboard,

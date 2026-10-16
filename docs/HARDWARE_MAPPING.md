@@ -29,17 +29,27 @@ datasheets first.
 
 ## Confirmed STM32 signal groups
 
-The Fritzing netlist contains ten wired STM32 connectors:
+The Fritzing netlist and the installed Nucleo part definition identify the
+following intended Arduino-header connections. STM32 pin translations are from
+ST UM1724 for NUCLEO-F401RE. These are **design mappings**, not evidence that the
+physical wiring or CubeIDE peripheral configuration has been verified.
 
-- Two connections to the Cytron MD10C control header
-- Two connections to the relay module control header
-- Six connections routed through the breadboard for sensors and probe circuitry
+| Intended function | Nucleo header | STM32 pin/function | Current `.ioc` status |
+|---|---|---|---|
+| MD10C PWM | D6 | PB10 / TIM2_CH3 | Not configured |
+| MD10C direction | D7 | PA8 / GPIO | Not configured |
+| Relay input 1 | D4 | PB5 / GPIO | Not configured |
+| Relay input 2 | D5 | PB4 / TIM3_CH1 or GPIO | Not configured |
+| DS18B20 data | D2 | PA10 / GPIO | Not configured |
+| Protected voltage probe | A0 | PA0 / ADC1_IN0 | Not configured |
+| INA219 SDA | A4/SDA | PC1 or PB9 depending solder bridges | Not configured |
+| INA219 SCL | A5/SCL | PC0 or PB8 depending solder bridges | Not configured |
+| Sensor supply | 3V3 | 3.3 V rail | Physical verification required |
+| Common reference | GND | Ground | Physical verification required |
 
-The custom STM32 part is referenced but not embedded in the `.fzz` archive.
-Its connector IDs therefore cannot yet be translated reliably into labeled
-pins such as `PA5`, `PB8`, or Arduino-header names. The Cytron custom part also
-uses unlabeled connector names, so PWM versus direction must be checked against
-the physical board or its source part.
+The MD10C custom part has unnamed connector metadata, but its breadboard graphic
+aligns the D6 connection with `PWM` and the D7 connection with `DIR`. Confirm
+those terminal labels on the actual MD10C before connection.
 
 ## Important software implications
 
@@ -59,14 +69,14 @@ the physical board or its source part.
 
 ## Information still required before firmware pin definitions
 
-1. Exact Nucleo model; the project currently identifies only a generic Nucleo.
-2. STM32 pin label for each of the ten connected signals.
-3. Which MD10C control terminal is PWM and which is direction.
-4. INA219 I2C addresses and which controller reads them.
-5. Relay channel purpose and whether each input is active-low.
-6. Fuse current ratings and the physical kill-switch behavior.
-7. ADC reference and intended maximum voltage-probe input.
-8. The desired USB serial port settings and message rate.
+1. Confirm the physical board is NUCLEO-F401RE / STM32F401RET6.
+2. Inspect A4/A5 solder bridges to determine whether I2C reaches PB9/PB8.
+3. Confirm MD10C PWM/DIR terminal labels, logic levels, and common ground.
+4. Confirm INA219 I2C addresses and which controller reads them.
+5. Confirm relay channel purpose and whether each input is active-low.
+6. Record fuse current ratings and physical kill-switch behavior.
+7. Confirm ADC reference, divider values, clamp orientation, and safe probe limit.
+8. Confirm the Raspberry Pi USB serial device path and permissions.
 
 ## Proposed Pi–STM32 measurement frame
 

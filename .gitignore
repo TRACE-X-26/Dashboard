@@ -9,3 +9,9 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+# STM32CubeIDE generated outputs and local application bundles
+ADS/Debug/
+ADS/Release/
+ADS/TraceX.app/
+ADS/.$*.dtmp

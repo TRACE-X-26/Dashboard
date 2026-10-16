@@ -4,12 +4,12 @@ No step in this document has been completed merely because software tests pass. 
 
 ## Gate 1 — preserve and reconcile firmware
 
-- [ ] Back up or commit the existing `/Users/markussanford/ADS` project.
+- [ ] Commit and push the imported `ADS/` CubeIDE project after Phase 3 review.
 - [ ] Confirm the board is NUCLEO-F401RE / STM32F401RET6.
-- [ ] Reconcile the `.ioc` HSE selection with generated `main.c` HSI clock code.
-- [ ] Build the unchanged firmware in STM32CubeIDE.
+- [x] Investigate and document the `.ioc` HSE reservation versus generated HSI PLL code; do not regenerate until the intended source is selected.
+- [x] Build the communication-only firmware in STM32CubeIDE with zero errors and warnings.
 - [ ] Flash it with motor power disconnected.
-- [ ] Confirm the legacy banner at 115200 8-N-1.
+- [ ] Confirm status/capabilities/heartbeat at 115200 8-N-1.
 - [ ] Confirm the actual Pi serial device path and stable device identification.
 
 ## Gate 2 — electrical design review
@@ -37,8 +37,8 @@ No step in this document has been completed merely because software tests pass. 
 
 - [ ] Configure motor pins in `.ioc`; record generated pin map.
 - [ ] Firmware boot/reset leaves PWM at 0 and driver disabled.
-- [ ] Implement bounded frame parsing without unbounded blocking.
-- [ ] Implement status, capabilities, errors, sequence correlation, and heartbeat.
+- [x] Implement bounded frame parsing without unbounded blocking — **HOST TESTED ONLY**.
+- [x] Implement status, capabilities, errors, sequence correlation, and heartbeat — **HOST TESTED ONLY**.
 - [ ] Implement a communication watchdog that independently forces PWM to 0.
 - [ ] Reject invalid state transitions, PWM values, and direction changes under power.
 - [ ] Latch applicable faults and require explicit reset.
