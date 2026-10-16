@@ -4,6 +4,14 @@ All notable project changes should be recorded here. Hardware verification is tr
 
 ## Unreleased
 
+### Added — Raspberry Pi STM32 connection test, October 16, 2026
+
+- Added a dedicated communication-only tester that discovers the Nucleo serial
+  port and verifies status, capabilities, faults, and heartbeat.
+- Kept motor control explicitly disabled throughout the connection test.
+- Added clear pass/fail output and port, permission, and port-contention hints.
+- Added host-side tests for safe command selection and serial-port discovery.
+
 ### Added — Phase 3 communication-only STM32 firmware, October 14, 2026
 
 - Imported the existing NUCLEO-F401RE STM32CubeIDE project without regenerating CubeMX files.

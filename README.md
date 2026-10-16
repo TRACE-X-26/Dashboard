@@ -58,6 +58,19 @@ in the generated firmware: `/dev/ttyACM0`, 115200 baud, 8 data bits, no parity,
 versioned JSON message per line and supports status, capabilities, measurements,
 commands, acknowledgments, device errors, and heartbeats.
 
+For a communication-only Raspberry Pi test, connect the Nucleo through its
+ST-LINK USB port and run:
+
+```bash
+source .venv/bin/activate
+python3 -m diagnostic_platform.verify_stm32
+```
+
+The tester prefers a stable `/dev/serial/by-id/` path and falls back to
+`/dev/ttyACM*`. It requests only status, capabilities, faults, and heartbeat;
+motor control remains disabled. An explicit port may be supplied with
+`--port /dev/ttyACM0`.
+
 The existing STM32 firmware was inspected but not changed. It currently sends
 `STM32 CONNECTED TO PI` once per second on USART2 through the ST-LINK virtual COM
 port. It does not yet parse commands or configure PWM, motor direction, ADC,
