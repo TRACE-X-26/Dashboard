@@ -19,6 +19,13 @@ typedef int (*ADS_ProtocolTransmitFn)(const uint8_t *data, size_t length,
                                       void *context);
 typedef uint32_t (*ADS_ProtocolTickFn)(void *context);
 
+/* Order: voltage, current, power, temperature, RPM. Fixed point in 1/1000 unit.
+ * Acquisition must be nonblocking and mark missing/stale/CRC-failed data invalid. */
+typedef struct { int32_t milli_value; uint32_t timestamp_ms; uint8_t valid; } ADS_Sample;
+typedef void (*ADS_AcquireFn)(ADS_Sample samples[5], void *context);
+typedef void (*ADS_StopFn)(void *context);
+typedef void (*ADS_HeartbeatFn)(uint32_t now_ms, void *context);
+
 typedef enum
 {
   ADS_PROTOCOL_SAFE_IDLE = 0,
@@ -34,6 +41,9 @@ typedef struct
   uint8_t receive_overflow;
   uint8_t has_received_request;
   ADS_ProtocolSafetyState safety_state;
+  ADS_AcquireFn acquire;
+  ADS_StopFn stop;
+  ADS_HeartbeatFn heartbeat;
   ADS_ProtocolTransmitFn transmit;
   ADS_ProtocolTickFn tick;
   void *callback_context;
@@ -43,6 +53,8 @@ void ADS_Protocol_Init(ADS_Protocol *protocol,
                        ADS_ProtocolTransmitFn transmit,
                        ADS_ProtocolTickFn tick,
                        void *callback_context);
+void ADS_Protocol_SetHardwareCallbacks(ADS_Protocol *protocol, ADS_AcquireFn acquire, ADS_StopFn stop);
+void ADS_Protocol_SetHeartbeatCallback(ADS_Protocol *protocol, ADS_HeartbeatFn heartbeat);
 void ADS_Protocol_ProcessByte(ADS_Protocol *protocol, uint8_t byte);
 void ADS_Protocol_Poll(ADS_Protocol *protocol);
 ADS_ProtocolSafetyState ADS_Protocol_GetSafetyState(

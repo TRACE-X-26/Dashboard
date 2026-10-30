@@ -73,6 +73,14 @@ void Error_Handler(void);
 #define SWO_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+#define CIRCUIT_RELAY_Pin GPIO_PIN_4
+#define CIRCUIT_RELAY_GPIO_Port GPIOB
+#define MOTOR_RELAY_Pin GPIO_PIN_5
+#define MOTOR_RELAY_GPIO_Port GPIOB
+#define MOTOR_PWM_Pin GPIO_PIN_10
+#define MOTOR_PWM_GPIO_Port GPIOB
+#define MOTOR_DIRECTION_Pin GPIO_PIN_8
+#define MOTOR_DIRECTION_GPIO_Port GPIOA
 
 /* USER CODE END Private defines */
 

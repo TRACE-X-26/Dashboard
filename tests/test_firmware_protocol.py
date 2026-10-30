@@ -93,12 +93,39 @@ class FirmwareProtocolCompatibilityTests(unittest.TestCase):
         ]
         responses = self.exchange([encode_message(request) for request in requests])
 
-        self.assertEqual(responses[0]["payload"]["code"], "MEASUREMENTS_UNAVAILABLE")
+        self.assertEqual(responses[0]["type"], "measurement")
+        for item in responses[0]["payload"]["result"]["measurements"].values():
+            self.assertFalse(item["valid"])
+            self.assertIsNone(item["value"])
         self.assertEqual(
             [response["payload"]["code"] for response in responses[1:]],
             ["CONTROL_DISABLED"] * 5,
         )
-        self.assertTrue(all(response["type"] == "error" for response in responses))
+        self.assertTrue(all(response["type"] == "error" for response in responses[1:]))
+
+    def test_safety_callback_at_exact_timeout(self):
+        subprocess.run([str(self.executable), '--safety'], check=True)
+
+    def test_normal_and_repeated_shutdown_requests(self):
+        subprocess.run([str(self.executable), "--normal-shutdown"], check=True)
+
+    def test_acquisition_fixed_point_units_and_timestamps(self):
+        output = subprocess.check_output([str(self.executable), '--samples'],
+            input=encode_message(command_message(CommandName.READ_MEASUREMENTS, 1)))
+        channels = json.loads(output)['payload']['result']['measurements']
+        self.assertEqual(channels['voltage'], dict(value=12.345, unit='V', valid=True, timestamp_ms=42))
+        self.assertEqual(channels['current']['value'], -.125)
+        self.assertIsNone(channels['temperature']['value'])
+
+    def test_malformed_frames_and_serial_resynchronization(self):
+        good = encode_message(command_message(CommandName.GET_STATUS, 2))
+        bad = [good[:-2] + b',}\n', good.replace(b'"version":1', b'"version":1,"version":1'),
+               good.replace(b'"seq":2', b'"seq":2.5'), b'x' * 513 + b'\n',
+               good.replace(b'"arguments":{}', b'"arguments":[]'), b'{}garbage\n']
+        for frame in bad:
+            responses = self.exchange([frame, good])
+            self.assertEqual(responses[0]['type'], 'error')
+            self.assertEqual(responses[-1]['type'], 'status')
 
     def test_invalid_version_returns_correlated_error(self) -> None:
         frame = (

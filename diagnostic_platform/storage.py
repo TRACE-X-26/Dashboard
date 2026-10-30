@@ -70,6 +70,13 @@ class DiagnosticStore:
                 severity TEXT NOT NULL,
                 details_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS historical_recordings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sha256 TEXT NOT NULL UNIQUE,
+                imported_at TEXT NOT NULL,
+                original_csv TEXT NOT NULL,
+                result_json TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_measurements_session
                 ON measurements(session_id, sequence);
             CREATE INDEX IF NOT EXISTS idx_sessions_device
@@ -276,3 +283,38 @@ class DiagnosticStore:
 
     def close(self) -> None:
         self.connection.close()
+
+    def save_recording(self, content: str, result: dict, imported_at: str) -> int:
+        existing = self.connection.execute(
+            "SELECT id,result_json FROM historical_recordings WHERE sha256=?", (result['sha256'],)
+        ).fetchone()
+        if existing is not None:
+            # Reanalysis can improve parsing; original source, labels and import time stay intact.
+            refreshed = {**result, 'metadata': json.loads(existing['result_json'])['metadata']}
+            self.connection.execute('UPDATE historical_recordings SET result_json=? WHERE id=?',
+                                    (json.dumps(refreshed, allow_nan=False), existing['id']))
+            self.connection.commit()
+            return int(existing['id'])
+        self.connection.execute(
+            "INSERT OR IGNORE INTO historical_recordings(sha256,imported_at,original_csv,result_json) VALUES (?,?,?,?)",
+            (result["sha256"], imported_at, content, json.dumps(result, allow_nan=False)),
+        )
+        self.connection.commit()
+        return int(self.connection.execute(
+            "SELECT id FROM historical_recordings WHERE sha256=?", (result["sha256"],)
+        ).fetchone()[0])
+
+    def list_recordings(self) -> list[dict]:
+        rows = self.connection.execute(
+            "SELECT id,imported_at,result_json FROM historical_recordings ORDER BY id DESC"
+        ).fetchall()
+        return [{"id": r["id"], "imported_at": r["imported_at"],
+                 "metadata": json.loads(r["result_json"])["metadata"]} for r in rows]
+
+    def recording(self, recording_id: int) -> dict:
+        row = self.connection.execute(
+            "SELECT result_json FROM historical_recordings WHERE id=?", (recording_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(recording_id)
+        return {"id": recording_id, **json.loads(row["result_json"])}

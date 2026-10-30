@@ -4,11 +4,15 @@ import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { api, testSocket } from './api'
+import HistoricalRecordings from './HistoricalRecordings'
+import LiveSensors from './LiveSensors'
 import type { Baseline, CircuitProfile, CircuitReport, Finding, Measurement, MeterReading, MotorStatus, Profile, Report, Session, SessionDetail } from './types'
 
-type Page = 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles'
+type Page = 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles' | 'recordings' | 'sensors'
 
 const NAV: { key: Page; label: string; icon: string }[] = [
+  { key: 'sensors', label: 'STM32 sensors', icon: '⌁' },
+  { key: 'recordings', label: 'CSV recordings', icon: '▤' },
   { key: 'dashboard', label: 'Overview', icon: '⌂' },
   { key: 'control', label: 'Motor control', icon: '◉' },
   { key: 'meter', label: 'Live multimeter', icon: '⌁' },
@@ -52,7 +56,9 @@ function SignalChart({ data }: { data: Measurement[] }) {
   )
 }
 
-function Dashboard({ sessions, refresh }: { sessions: Session[]; refresh: () => void }) {
+type Readiness = { online: boolean; enabled: boolean; connected: boolean; stale: boolean }
+
+function Dashboard({ sessions, refresh, readiness }: { sessions: Session[]; refresh: () => void; readiness: Readiness }) {
   const complete = sessions.filter(s => s.state === 'COMPLETE').length
   const attention = sessions.filter(s => ['WARNING', 'CRITICAL'].includes(s.condition ?? '')).length
   const average = sessions.filter(s => s.health_score != null)
@@ -62,12 +68,12 @@ function Dashboard({ sessions, refresh }: { sessions: Session[]; refresh: () => 
     <section className="metric-grid">
       <Metric label="Tests recorded" value={String(sessions.length)} />
       <Metric label="Completed" value={String(complete)} />
-      <Metric label="Average health" value={String(health)} unit="%" />
+      <Metric label="Simulation rule score" value={String(health)} unit="%" />
       <Metric label="Need attention" value={String(attention)} />
     </section>
-    <section className="split">
+    <section className="split overview-split">
       <div className="panel"><div className="panel-title"><div><h2>System readiness</h2><p>Current software and connection state</p></div></div>
-        <div className="readiness"><div><i className="dot ready"/><span>FastAPI service</span><strong>Online</strong></div><div><i className="dot ready"/><span>Simulation engine</span><strong>Ready</strong></div><div><i className="dot idle"/><span>STM32 hardware</span><strong>Not connected</strong></div><div><i className="dot ready"/><span>SQLite storage</span><strong>Ready</strong></div></div>
+        <div className="readiness"><div><i className="dot ready"/><span>FastAPI service</span><strong>{readiness.online ? 'Online' : 'Unavailable'}</strong></div><div><i className="dot ready"/><span>Simulation engine</span><strong>{readiness.online ? 'Available' : 'Unknown'}</strong></div><div><i className="dot idle"/><span>STM32 receiver</span><strong>{!readiness.enabled ? 'Not configured' : !readiness.connected ? 'Disconnected' : readiness.stale ? 'No fresh telemetry' : 'Receiving · unverified'}</strong></div><div><i className="dot ready"/><span>SQLite storage</span><strong>{readiness.online ? 'Accessible' : 'Unknown'}</strong></div></div>
       </div>
       <div className="panel"><div className="panel-title"><div><h2>Recent tests</h2><p>Latest stored diagnostic sessions</p></div></div>
         <div className="table-wrap"><table><thead><tr><th>Test</th><th>Device</th><th>Scenario</th><th>Result</th><th>Health</th></tr></thead><tbody>{sessions.slice(0, 6).map(s => <tr key={s.id}><td>#{s.id}</td><td>{s.device_id}</td><td>{s.scenario.replaceAll('_', ' ')}</td><td><Status value={s.condition ?? s.state} /></td><td>{s.health_score == null ? '—' : `${s.health_score}%`}</td></tr>)}</tbody></table>{!sessions.length && <p className="empty">No tests recorded.</p>}</div>
@@ -328,18 +334,21 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [baselines, setBaselines] = useState<Baseline[]>([])
   const [online, setOnline] = useState(false)
+  const [receiver, setReceiver] = useState({ enabled: false, connected: false, stale: true })
   const refresh = useCallback(async () => {
-    try { const [health, nextProfiles, nextScenarios, nextSessions, nextBaselines] = await Promise.all([api.health(), api.profiles(), api.scenarios(), api.sessions(), api.baselines()]); setOnline(health.status === 'ok'); setProfiles(nextProfiles); setScenarios(nextScenarios); setSessions(nextSessions); setBaselines(nextBaselines) } catch { setOnline(false) }
+    try { const [health, nextProfiles, nextScenarios, nextSessions, nextBaselines, nextReceiver] = await Promise.all([api.health(), api.profiles(), api.scenarios(), api.sessions(), api.baselines(), api.liveStatus()]); setReceiver(nextReceiver); setOnline(health.status === 'ok'); setProfiles(nextProfiles); setScenarios(nextScenarios); setSessions(nextSessions); setBaselines(nextBaselines) } catch { setOnline(false) }
   }, [])
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer) }, [refresh])
   const content = useMemo(() => {
+    if (page === 'sensors') return <LiveSensors/>
+    if (page === 'recordings') return <HistoricalRecordings/>
     if (page === 'control') return <MotorControl/>
     if (page === 'meter') return <LiveMultimeter/>
     if (page === 'circuit') return <CircuitDiagnostics/>
     if (page === 'test') return <RunTest profiles={profiles} scenarios={scenarios} onComplete={refresh}/>
     if (page === 'history') return <History sessions={sessions} onBaseline={refresh}/>
     if (page === 'profiles') return <Profiles profiles={profiles} baselines={baselines} refresh={refresh}/>
-    return <Dashboard sessions={sessions} refresh={refresh}/>
-  }, [page, profiles, scenarios, sessions, baselines, refresh])
-  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>ADS</strong><span>Diagnostic Platform</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} onClick={() => setPage(item.key)} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Simulation mode</span></div></div></aside><main>{content}</main></div>
+    return <Dashboard sessions={sessions} refresh={refresh} readiness={{ online, ...receiver }}/>
+  }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver])
+  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor control: simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · Physical motor control disabled</span></div>{content}</main></div>
 }

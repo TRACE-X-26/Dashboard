@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +12,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from diagnostic_platform.config import Settings
+from diagnostic_platform.history import parse_csv
+from diagnostic_platform.live import LiveMonitor
 from diagnostic_platform.control import (
     SimulatedMotorController,
     SimulatedMotorSequenceService,
@@ -30,7 +34,9 @@ from .schemas import (
     ProfilePayload,
     STM32CommandPayload,
     TestRequest,
+    HistoricalImportPayload,
 )
+from .dashboard import mount_dashboard
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +49,7 @@ motor_sequence = SimulatedMotorSequenceService(motor_controller)
 stm32_connection = SimulatedSTM32Connection(motor_controller)
 multimeter = SimulatedMultimeter()
 circuit_service = CircuitDiagnosticService()
+live_monitor = LiveMonitor(os.getenv('ADS_LIVE_SERIAL_PORT', '').strip(), settings.serial_baud)
 
 
 def now() -> str:
@@ -106,9 +113,11 @@ async def lifespan(_: FastAPI):
         store.close()
     record_event("APPLICATION_STARTED", mode=settings.mode, hardware_control=False)
     stm32_connection.connect()
+    live_monitor.start()
     try:
         yield
     finally:
+        live_monitor.close()
         stm32_connection.disconnect()
 
 
@@ -136,6 +145,22 @@ def health() -> dict:
         "measurement_source": settings.mode.upper(),
         "stm32_connected": stm32_connection.is_connected(),
     }
+
+
+@app.get('/api/live/status')
+def live_status() -> dict:
+    return live_monitor.snapshot()
+
+
+@app.websocket('/ws/live')
+async def live_updates(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json(live_monitor.snapshot())
+            await asyncio.sleep(.25)
+    except WebSocketDisconnect:
+        return
 
 
 @app.get("/api/hardware/status")
@@ -299,6 +324,33 @@ def list_events(limit: int = 100) -> list[dict]:
         return store.list_events(max(1, min(limit, 500)))
 
 
+@app.get("/api/recordings")
+def list_recordings() -> list[dict]:
+    with open_store() as store:
+        return store.list_recordings()
+
+
+@app.post("/api/recordings", status_code=201)
+def import_recording(payload: HistoricalImportPayload) -> dict:
+    metadata = payload.model_dump(exclude={"content"})
+    try:
+        result = parse_csv(payload.content, metadata)
+    except (ValueError, TypeError, AttributeError, csv.Error) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with open_store() as store:
+        recording_id = store.save_recording(payload.content, result, now())
+        return store.recording(recording_id)
+
+
+@app.get("/api/recordings/{recording_id}")
+def get_recording(recording_id: int) -> dict:
+    with open_store() as store:
+        try:
+            return store.recording(recording_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Recording not found") from exc
+
+
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: int) -> dict:
     store = open_store()
@@ -404,3 +456,7 @@ async def run_test(websocket: WebSocket) -> None:
             session.close()
         if store is not None:
             store.close()
+
+
+if os.getenv('ADS_SERVE_DASHBOARD', '') == '1':
+    mount_dashboard(app, ROOT / 'frontend' / 'dist')

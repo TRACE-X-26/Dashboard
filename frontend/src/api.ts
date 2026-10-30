@@ -1,4 +1,5 @@
 import type { Baseline, CircuitProfile, CircuitReport, CommandAcknowledgment, MeterReading, MotorStatus, Profile, Session, SessionDetail } from './types'
+import type { Recording, RecordingMetadata, RecordingSummary } from './types'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options)
@@ -10,6 +11,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  liveStatus: () => request<{ enabled: boolean; connected: boolean; stale: boolean }>('/api/live/status'),
+  recordings: () => request<RecordingSummary[]>('/api/recordings'),
+  recording: (id: number) => request<Recording>(`/api/recordings/${id}`),
+  importRecording: (metadata: RecordingMetadata, content: string) => request<Recording>('/api/recordings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...metadata, content }),
+  }),
   health: () => request<{ status: string; mode: string; database: string; hardware_control: boolean; measurement_source: string }>('/api/health'),
   scenarios: () => request<string[]>('/api/scenarios'),
   profiles: () => request<Profile[]>('/api/profiles'),

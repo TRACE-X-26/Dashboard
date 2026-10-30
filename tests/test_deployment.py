@@ -1,0 +1,80 @@
+import tempfile
+import unittest
+import sqlite3
+from unittest.mock import patch
+from zipfile import ZipFile
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from api.dashboard import mount_dashboard
+from deploy.pi.configure import configure
+import deploy.pi.build_bundle as bundle
+
+
+class DeploymentTests(unittest.TestCase):
+    def test_bundle_excludes_machine_dependencies_and_backs_up_wal_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.env.example').write_text('ADS_MODE=simulation\n')
+            (root / '.env').write_text('SECRET=not-for-transfer')
+            (root / '.venv').mkdir()
+            (root / '.venv/token').write_text('exclude')
+            (root / 'app.py').write_text('# portable source')
+            db = sqlite3.connect(root / 'diagnostics.db')
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('CREATE TABLE evidence(value)')
+            db.execute('INSERT INTO evidence VALUES (73)')
+            db.commit()
+            try:
+                output = root / 'deliverables/test.zip'
+                with patch.object(bundle, 'ROOT', root):
+                    bundle.build_bundle(output)
+                with ZipFile(output) as archive:
+                    self.assertNotIn('Trace-X/.env', archive.namelist())
+                    self.assertNotIn('Trace-X/.venv/token', archive.namelist())
+                    self.assertIn('Trace-X/app.py', archive.namelist())
+                    copy = root / 'backup.db'
+                    copy.write_bytes(archive.read('Trace-X/diagnostics.db'))
+                restored = sqlite3.connect(copy)
+                try:
+                    self.assertEqual(restored.execute('SELECT value FROM evidence').fetchone()[0], 73)
+                finally:
+                    restored.close()
+            finally:
+                db.close()
+    def test_local_dashboard_preserves_api_and_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'index.html').write_text('<h1>Trace-X</h1>')
+            (root / 'app.js').write_text('console.log("offline")')
+            app = FastAPI()
+            @app.get('/api/health')
+            def health():
+                return {'status': 'ok'}
+            mount_dashboard(app, root)
+            with TestClient(app) as client:
+                self.assertIn('Trace-X', client.get('/').text)
+                self.assertEqual(client.get('/api/health').json(), {'status': 'ok'})
+                self.assertEqual(client.get('/app.js').status_code, 200)
+                self.assertEqual(client.get('/api/missing').status_code, 404)
+
+    def test_missing_build_fails_with_setup_instruction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, 'npm'):
+                mount_dashboard(FastAPI(), Path(directory))
+
+    def test_configuration_preserves_serial_opt_in_and_existing_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, config = root / 'Trace X', root / 'config'
+            configure(project, config)
+            service = (config / 'systemd/user/trace-x.service').read_text()
+            self.assertIn('--host 127.0.0.1', service)
+            self.assertIn('--workers 1', service)
+            env = config / 'trace-x/runtime.env'
+            self.assertIn('ADS_LIVE_SERIAL_PORT=\n', env.read_text())
+            env.write_text('ADS_LIVE_SERIAL_PORT=/dev/custom\n')
+            configure(project, config)
+            self.assertEqual(env.read_text(), 'ADS_LIVE_SERIAL_PORT=/dev/custom\n')

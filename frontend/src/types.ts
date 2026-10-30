@@ -8,6 +8,34 @@ export type Profile = {
   max_temperature: number
 }
 
+export type RecordingMetadata = {
+  filename: string
+  device_id: string
+  condition: string
+  attached_mass_g: number | null
+  fixture_description: string
+  target_pwm_percent: number | null
+  filename_mass_label_g?: number | null
+  recorded_target_pwm_labels?: string[]
+}
+export type RecordingSummary = { id: number; imported_at: string; metadata: RecordingMetadata }
+export type Recording = {
+  id: number
+  metadata: RecordingMetadata
+  source: string
+  analysis_status: string
+  running_samples: number
+  samples: { sequence: number; line: number; timestamp: string; phase: string; warnings: string[];
+    direction: string | null;
+    voltage: number | null; current: number | null; rpm: number | null; temperature: number | null;
+    input_power: number | null; recorded_power: number | null }[]
+  warnings: { line: number; code: string }[]
+  limitations: string[]
+  features: Record<string, { count: number; mean: number | null; min: number | null; max: number | null; std: number | null }>
+  recorded_features?: Recording['features']
+  timestamp_basis?: string
+}
+
 export type Measurement = {
   sequence: number
   timestamp: string

@@ -41,3 +41,13 @@ class CircuitRunPayload(BaseModel):
 class STM32CommandPayload(BaseModel):
     command: str = Field(min_length=1, max_length=40)
     arguments: dict = Field(default_factory=dict)
+
+
+class HistoricalImportPayload(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=2_000_000)
+    device_id: str = Field(min_length=1, max_length=80)
+    condition: str = Field(default="UNKNOWN", max_length=120)
+    attached_mass_g: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    fixture_description: str = Field(default="", max_length=2000)
+    target_pwm_percent: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)

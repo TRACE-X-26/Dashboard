@@ -1,5 +1,13 @@
 # Software-Defined Diagnostic Platform
 
+For the self-contained Pi 5 / 1024×600 touchscreen presentation installation, use [the Pi install and acceptance guide](deploy/pi/README.md). The production backend can serve the built React app locally; Vite and the Mac are not needed during the presentation.
+
+For a dashboard on a Mac with STM32 USB acquisition on a Raspberry Pi, see [Mac/Pi live monitoring setup](docs/MAC_PI_LIVE_SETUP.md). Passive monitoring is opt-in; physical motor control and calibrated live health assessment remain disabled/unverified.
+
+Historical CSV import is available under **CSV recordings** in the existing dashboard. See [Trace-X Phase 2 operation and connection verification](docs/TRACE_X_PHASE_2.md). Experiment recordings are not included in this checkout; offline import does not activate hardware or enable physical motor commands.
+
+Private recordings, local databases, the detailed recording audit and derived data inventory are excluded from GitHub. A fresh clone starts without those experiment records; import your own approved archive using `python -m diagnostic_platform.import_history`. Local experiment data remains intact.
+
 This repository contains the Raspberry Pi software for a modular electrical and
 electromechanical diagnostic platform. The first supported device is a DC motor.
 
@@ -71,23 +79,27 @@ The tester prefers a stable `/dev/serial/by-id/` path and falls back to
 motor control remains disabled. An explicit port may be supplied with
 `--port /dev/ttyACM0`.
 
-The existing STM32 firmware was inspected but not changed. It currently sends
-`STM32 CONNECTED TO PI` once per second on USART2 through the ST-LINK virtual COM
-port. It does not yet parse commands or configure PWM, motor direction, ADC,
-RPM, or a communication watchdog. For that reason, selecting physical hardware
-and issuing real motor commands remain disabled. The simulator is the supported
-development path until the firmware, wiring, voltage levels, current limiting,
-emergency stop, and safe-loss-of-communication behavior pass the documented
-checks.
+The existing STM32CubeIDE project now implements ADS v1 framed JSON status,
+capabilities, faults, heartbeat and measurement responses. Missing sensors are
+reported invalid with null values; the physical acquisition routines are still
+absent. Motor commands remain disabled. The motor stop path disables TIM2 CH3,
+clears PWM and gates PB5 relay drive on verified polarity, power-path and
+safe-output configuration. A STM32-local 2-second communication watchdog latches
+shutdown; communication recovery cannot restart the motor.
+
+See the [current integration status](docs/STM32_INTEGRATION_STATUS.md) and
+[manual relay bench procedure](docs/MOTOR_RELAY_BENCH_TEST.md). No firmware was
+flashed or motor energized during these changes. Older audit/review documents
+record earlier project phases and may describe superseded firmware behavior.
 
 See [the firmware audit](docs/STM32_FIRMWARE_AUDIT.md), [serial protocol](docs/SERIAL_PROTOCOL.md),
 [firmware integration plan](docs/STM32_INTEGRATION_PLAN.md),
 [hardware verification plan](docs/HARDWARE_VERIFICATION.md), and [Phase 2 review guide](docs/PHASE_2_REVIEW.md).
 
 The existing STM32CubeIDE project is stored in `ADS/`. Its current incremental
-firmware implements only safe protocol parsing and read-only status operations.
-It builds successfully in STM32CubeIDE, but has not been flashed or verified on
-hardware. Generated build output and the local `TraceX.app` bundle are excluded
+firmware includes safe protocol parsing, measurement responses and shutdown
+logic. Host tests and ARM-target syntax checks cover the latest safety additions;
+a complete target build and physical acceptance still require verification. Generated build output and the local `TraceX.app` bundle are excluded
 from Git; the CubeIDE project metadata, source, HAL/CMSIS dependencies, startup
 code, linker scripts, and `.ioc` remain available for normal MacBook use.
 
@@ -175,7 +187,14 @@ MeasurementSource (stateful simulator now, STM32 serial later)
 
 1. Review the Phase 2 simulator and communication tests.
 2. Confirm MD10C and sensor pin assignments plus 3.3 V signal compatibility.
-3. Implement the documented protocol in firmware with motor output off at boot.
+3. Connect the missing physical sensor acquisition routines to ADS v1.
 4. Verify USB communication with motor power disconnected.
 5. Complete electrical safety, calibration, stop, and watchdog tests before any
    physical motor command is enabled.
+
+## GitHub development branch
+
+The integration branch is `trace-x-integration-2026-10-30` in
+[TRACE-X-26/Dashboard](https://github.com/TRACE-X-26/Dashboard).
+See [publishing and retrieval notes](docs/GITHUB_PUBLICATION.md) for the exact
+clone command and files intentionally kept local.

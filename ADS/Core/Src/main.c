@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ads_protocol.h"
+#include "ads_motor.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -58,6 +59,18 @@ static uint32_t ADS_GetTick(void *context);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void ADS_HeartbeatMotor(uint32_t now_ms, void *context)
+{
+  (void)context;
+  ADS_Motor_Heartbeat(now_ms);
+}
+
+static void ADS_StopMotor(void *context)
+{
+  (void)context;
+  ADS_Motor_Stop();
+}
+
 static int ADS_UART_Transmit(const uint8_t *data, size_t length, void *context)
 {
   UART_HandleTypeDef *uart = (UART_HandleTypeDef *)context;
@@ -91,6 +104,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  ADS_Motor_Init();
 
   /* USER CODE END Init */
 
@@ -106,6 +120,8 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   ADS_Protocol_Init(&ads_protocol, ADS_UART_Transmit, ADS_GetTick, &huart2);
+  ADS_Protocol_SetHardwareCallbacks(&ads_protocol, NULL, ADS_StopMotor);
+  ADS_Protocol_SetHeartbeatCallback(&ads_protocol, ADS_HeartbeatMotor);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -115,6 +131,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+      ADS_Motor_Poll(HAL_GetTick());
 
 #if ADS_PROTOCOL_LEGACY_BANNER_ENABLED
       char msg[] = "STM32 CONNECTED TO PI\r\n";
@@ -261,6 +278,7 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
+  ADS_Motor_Fault();
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
