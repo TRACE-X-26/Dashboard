@@ -1,5 +1,9 @@
 # Software-Defined Diagnostic Platform
 
+The Pi receiver now reads the STM32's existing plain-text motor output without firmware changes. See [plain-text motor connection and exact Pi launch commands](docs/STM32_PLAIN_TEXT_MOTOR.md). The default connection verifier listens passively; use `--protocol json` only for the existing JSON request/response firmware.
+
+Circuit 4 (LM324 comparator) now has a physical-capture workflow and provisional multi-point rules. See [Circuit 4 setup, references and remaining STM32 integration](docs/CIRCUIT_4_CAPTURE.md). The supplied multimeter evidence is separate from live, end-to-end-verified acquisition.
+
 For the self-contained Pi 5 / 1024×600 touchscreen presentation installation, use [the Pi install and acceptance guide](deploy/pi/README.md). The production backend can serve the built React app locally; Vite and the Mac are not needed during the presentation.
 
 For a dashboard on a Mac with STM32 USB acquisition on a Raspberry Pi, see [Mac/Pi live monitoring setup](docs/MAC_PI_LIVE_SETUP.md). Passive monitoring is opt-in; physical motor control and calibrated live health assessment remain disabled/unverified.
@@ -75,9 +79,12 @@ python3 -m diagnostic_platform.verify_stm32
 ```
 
 The tester prefers a stable `/dev/serial/by-id/` path and falls back to
-`/dev/ttyACM*`. It requests only status, capabilities, faults, and heartbeat;
-motor control remains disabled. An explicit port may be supplied with
-`--port /dev/ttyACM0`.
+`/dev/ttyACM*`. By default it passively detects complete plain-text telemetry
+or unsolicited ADS JSON without sending commands. For JSON request/response
+firmware, explicitly add `--protocol json` to request status, capabilities,
+faults and heartbeat. Motor commands remain disabled. An explicit port may
+be supplied with `--port /dev/ttyACM0`. Stop the live backend/other serial readers
+before running the verifier, then restart the backend afterward.
 
 The existing STM32CubeIDE project now implements ADS v1 framed JSON status,
 capabilities, faults, heartbeat and measurement responses. Missing sensors are

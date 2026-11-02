@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from diagnostic_platform.config import Settings
 from diagnostic_platform.history import parse_csv
 from diagnostic_platform.live import LiveMonitor
+from diagnostic_platform.physical_circuits import start_capture, arm_capture, capture_reading
+from diagnostic_platform.circuit4 import ASSET_ID as CIRCUIT4_ID, MODEL_VERSION as CIRCUIT4_MODEL, REFERENCES as CIRCUIT4_REFERENCES, circuit4_asset, classify_circuit4
 from diagnostic_platform.control import (
     SimulatedMotorController,
     SimulatedMotorSequenceService,
@@ -35,6 +37,9 @@ from .schemas import (
     STM32CommandPayload,
     TestRequest,
     HistoricalImportPayload,
+    PhysicalCircuitAsset,
+    PhysicalCircuitStart,
+    PhysicalCircuitArm,
 )
 from .dashboard import mount_dashboard
 
@@ -109,6 +114,8 @@ async def lifespan(_: FastAPI):
     try:
         if not store.list_profiles():
             store.save_profile(MotorProfile("MOTOR-001", 12, 2, 2500, 1.2, 3, 80))
+        if not any(asset['asset_id'] == CIRCUIT4_ID for asset in store.circuit_assets()):
+            store.save_circuit_asset(circuit4_asset())
     finally:
         store.close()
     record_event("APPLICATION_STARTED", mode=settings.mode, hardware_control=False)
@@ -150,6 +157,13 @@ def health() -> dict:
 @app.get('/api/live/status')
 def live_status() -> dict:
     return live_monitor.snapshot()
+
+
+@app.get('/api/live/motor')
+def live_motor_measurement() -> dict:
+    snapshot = live_monitor.snapshot()
+    return {key: snapshot[key] for key in ('hardware_connected', 'motor_sample', 'motor_format',
+                                          'complete_motor_frames', 'pending_motor_fields', 'warnings', 'error', 'hardware_control')}
 
 
 @app.websocket('/ws/live')
@@ -276,6 +290,73 @@ def run_circuit_test(payload: CircuitRunPayload) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/circuits/assets')
+def physical_circuit_assets() -> list[dict]:
+    with open_store() as store:
+        return store.circuit_assets()
+
+
+@app.post('/api/circuits/assets', status_code=201)
+def save_physical_circuit_asset(payload: PhysicalCircuitAsset) -> dict:
+    if payload.asset_id == CIRCUIT4_ID:
+        raise HTTPException(status_code=409, detail='Circuit 4 is a versioned preset. Use a different asset ID for modified circuits.')
+    asset = payload.model_dump()
+    with open_store() as store:
+        store.save_circuit_asset(asset)
+    return asset
+
+
+@app.get('/api/circuits/circuit4/reference-analysis')
+def circuit4_reference_analysis() -> dict:
+    return {'source': 'USER_REPORTED_MULTIMETER_REFERENCE', 'hardware_control': False,
+            'cases': [{'label': label, 'voltages': values,
+                       'diagnostic': classify_circuit4([{'point_id': point, 'channel': 'test_point_voltage', 'measured': value}
+                                                       for point, value in values.items()])}
+                      for label, values in CIRCUIT4_REFERENCES.items()]}
+
+
+@app.get('/api/circuits/captures')
+def physical_circuit_history() -> list[dict]:
+    with open_store() as store:
+        return store.circuit_capture_history()
+
+
+@app.post('/api/circuits/captures', status_code=201)
+def start_physical_circuit(payload: PhysicalCircuitStart) -> dict:
+    with open_store() as store:
+        asset = next((a for a in store.circuit_assets() if a['asset_id'] == payload.asset_id), None)
+        if asset is None:
+            raise HTTPException(status_code=404, detail='Circuit asset not found')
+        if asset.get('diagnostic_model') == CIRCUIT4_MODEL and not payload.conditions_confirmed:
+            raise HTTPException(status_code=409, detail='Confirm that supply, RV1 and fault switches will stay unchanged across TP0–TP4 capture')
+        session = start_capture(asset)
+        session['conditions_confirmed'] = payload.conditions_confirmed
+        return store.create_circuit_capture(session)
+
+
+@app.post('/api/circuits/captures/{session_id}/arm')
+def arm_physical_circuit(session_id: int, payload: PhysicalCircuitArm) -> dict:
+    with open_store() as store:
+        try:
+            return store.update_circuit_capture(arm_capture(store.circuit_capture(session_id), payload.point_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail='Circuit test not found') from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/circuits/captures/{session_id}/capture')
+def capture_physical_circuit(session_id: int) -> dict:
+    with open_store() as store:
+        try:
+            session = capture_reading(store.circuit_capture(session_id), live_monitor.snapshot())
+            return store.update_circuit_capture(session)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail='Circuit test not found') from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/scenarios")

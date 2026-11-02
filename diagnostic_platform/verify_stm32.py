@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import time
 from glob import glob
 from typing import Callable
 
 from .protocol import CommandName
 from .stm32 import STM32SerialConnection
+from .live import LiveMonitor
+from .text_telemetry import SerialLineDecoder
 
 
 def discover_serial_port() -> str:
@@ -34,7 +38,7 @@ def verify_connection(
     *,
     connection_factory: Callable[..., STM32SerialConnection] = STM32SerialConnection,
 ) -> dict:
-    """Run communication-only checks without enabling physical outputs."""
+    """Explicit JSON request/response checks, retained for API compatibility."""
     connection = connection_factory(
         port=port,
         baud=baud,
@@ -65,7 +69,79 @@ def verify_connection(
         "heartbeat_alive": heartbeat.get("alive"),
         "hardware_control": status.get("hardware_control"),
         "commands": list(capabilities.commands),
+        "format": "ads_json_v1",
     }
+
+
+def verify_telemetry(port: str, baud: int = 115200, *, timeout: float = 6,
+                     protocol: str = 'auto', transport_factory=None, clock=time.monotonic) -> dict:
+    """Passively recognize complete text cycles or valid unsolicited JSON.
+
+    Never writes serial bytes. Silence is not permission to send commands.
+    Request/response firmware can be checked explicitly with --protocol json.
+    """
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError('Timeout must be a finite positive number')
+    if protocol not in {'auto', 'plain-text'}:
+        raise ValueError('Passive protocol must be auto or plain-text')
+    monitor = LiveMonitor()
+    decoder = SerialLineDecoder()
+    transport = (transport_factory or LiveMonitor._open_serial)(port, baud)
+    monitor._connected = True  # A real transport is open; no simulation adapter is used.
+    deadline = clock() + timeout
+    warnings = set()
+    recognized_text = False
+    try:
+        while clock() < deadline:
+            chunk = transport.read(256)
+            lines, errors = decoder.feed(chunk)
+            if errors:
+                decoder.reset()
+                monitor._text_motor.reset()
+                warnings.update(errors)
+                continue
+            for line in lines:
+                if line.lstrip().startswith('{') and protocol == 'plain-text':
+                    continue
+                if line.lstrip().startswith('{'):
+                    # Validate protocol JSON rather than treating arbitrary JSON as a device handshake.
+                    from .protocol import decode_message, MessageType
+                    try:
+                        message = decode_message(line)
+                        if message.device_id != 'STM32-ADS':
+                            continue
+                        if message.message_type not in {MessageType.MEASUREMENT, MessageType.STATUS, MessageType.CAPABILITIES, MessageType.HELLO}:
+                            continue
+                        monitor.feed(line)
+                        warnings.update(monitor.snapshot()['warnings'])
+                        if 'INVALID_JSON_FRAME' in monitor.snapshot()['warnings']:
+                            continue
+                        return {'port': port, 'baud': baud, 'format': 'ads_json_v1',
+                                'source': 'stm32_serial', 'hardware_connected': True,
+                                'device_id': message.device_id, 'message_type': message.message_type.value,
+                                'motor_sample': monitor.snapshot()['motor_sample'],
+                                'read_only': True, 'commands_sent': False, 'hardware_control': False,
+                                'hardware_safety_verified': False, 'warnings': sorted(warnings)}
+                    except ValueError:
+                        warnings.add('INVALID_JSON_FRAME')
+                        continue
+                monitor.feed(line)
+                state = monitor.snapshot()
+                recognized_text |= state['motor_format'] == 'plain_text'
+                warnings.update(state['warnings'])
+                if state['motor_sample'] is not None:
+                    sample = {**state['motor_sample'], 'hardware_connected': True, 'stale': False}
+                    return {'port': port, 'baud': baud, 'format': 'plain_text', 'source': 'stm32_serial',
+                            'hardware_connected': True, 'motor_sample': sample,
+                            'read_only': True, 'commands_sent': False, 'hardware_control': False,
+                            'hardware_safety_verified': False, 'warnings': sorted(warnings)}
+    finally:
+        transport.close()
+    if recognized_text:
+        missing = ', '.join(monitor.snapshot()['pending_motor_fields'])
+        detail = ', '.join(sorted(warnings)) or 'none'
+        raise TimeoutError(f'Plain-text STM32 telemetry detected but no complete valid cycle within {timeout:g}s. Missing fields: {missing}. Warnings: {detail}. Check sensor status; no commands were sent.')
+    raise TimeoutError(f'No compatible passive telemetry within {timeout:g}s. Close other serial readers and check wiring/baud. For request/response JSON firmware use --protocol json. No commands were sent.')
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +153,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Serial device path. If omitted, the tester searches by-id and ttyACM paths.",
     )
     parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument('--protocol', choices=('auto', 'plain-text', 'json'), default='auto',
+                        help='Default auto passively detects text/streamed JSON. json explicitly sends status/capability/fault/heartbeat checks.')
+    parser.add_argument('--timeout', type=float, default=6, help='Passive detection timeout in seconds (default 6).')
     return parser
 
 
@@ -84,7 +163,8 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         port = args.port or discover_serial_port()
-        result = verify_connection(port, args.baud)
+        result = verify_connection(port, args.baud) if args.protocol == 'json' else verify_telemetry(
+            port, args.baud, timeout=args.timeout, protocol=args.protocol)
     except Exception as exc:
         print("STM32 CONNECTION TEST: FAILED")
         print(f"Reason: {exc}")

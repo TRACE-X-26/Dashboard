@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 
 
 class ProfilePayload(BaseModel):
@@ -51,3 +52,44 @@ class HistoricalImportPayload(BaseModel):
     attached_mass_g: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     fixture_description: str = Field(default="", max_length=2000)
     target_pwm_percent: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+
+
+class PhysicalCircuitPoint(BaseModel):
+    point_id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=100)
+    instruction: str = Field(min_length=1, max_length=500)
+    channel: Literal['test_point_voltage', 'circuit_supply_voltage', 'circuit_current', 'circuit_power']
+    minimum: float = Field(allow_inf_nan=False)
+    maximum: float = Field(allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def interval(self):
+        if self.minimum > self.maximum:
+            raise ValueError('Minimum cannot exceed maximum')
+        return self
+
+
+class PhysicalCircuitAsset(BaseModel):
+    asset_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=100)
+    supply_voltage: float = Field(gt=0, allow_inf_nan=False)
+    components: str = Field(min_length=1, max_length=3000)
+    connections: str = Field(min_length=1, max_length=3000)
+    test_points: list[PhysicalCircuitPoint] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode='after')
+    def unique_points(self):
+        ids = [p.point_id for p in self.test_points]
+        if len(ids) != len(set(ids)):
+            raise ValueError('Test-point IDs must be unique')
+        return self
+
+
+class PhysicalCircuitStart(BaseModel):
+    asset_id: str
+    conditions_confirmed: bool = False
+
+
+class PhysicalCircuitArm(BaseModel):
+    point_id: str
+    probe_confirmed: Literal[True]

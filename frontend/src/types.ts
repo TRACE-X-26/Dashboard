@@ -181,3 +181,32 @@ export type CircuitReport = {
   uses_learned_baseline: boolean
   steps: CircuitStepResult[]
 }
+
+export type PhysicalCircuitPoint = {
+  point_id: string; label: string; instruction: string;
+  channel: 'test_point_voltage' | 'circuit_supply_voltage' | 'circuit_current' | 'circuit_power';
+  minimum: number; maximum: number;
+}
+export type PhysicalCircuitAsset = {
+  asset_id: string; name: string; supply_voltage: number; components: string; connections: string;
+  test_points: PhysicalCircuitPoint[];
+  diagnostic_model?: string;
+  evidence_status?: string;
+  reference_values?: Record<string, Record<string, number>>;
+}
+export type CircuitDiagnostic = {
+  model_version: string; classification: string; verification: string;
+  suspected_region: string | null; reason: string; limitations: string[];
+  normal_deviations: { point_id: string; measured: number; normal_reference: number; difference_V: number; deviation_percent: number }[];
+}
+export type CircuitCapture = {
+  id: number; version: number; asset: PhysicalCircuitAsset; source: string; state: string;
+  started_at: string; armed_at: string | null; condition: string;
+  readings: (PhysicalCircuitPoint & { measured: number; unit: string; result: string; timestamp: string; explanation: string })[];
+  diagnostic?: CircuitDiagnostic;
+}
+export type CircuitTelemetry = {
+  enabled: boolean; connected: boolean; error: string | null;
+  circuit_channels: { asset_id: string; point_id: string; channel: string; value: number;
+    timestamp: string; age_seconds: number; quality: string }[];
+}

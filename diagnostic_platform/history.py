@@ -138,6 +138,9 @@ def parse_csv(content: str, metadata: dict) -> dict:
                 issues.append("RAW_CHANNEL_ASSOCIATION_UNVERIFIED")
             elif values["voltage"] is not None and values["current"] is not None:
                 power = values["voltage"] * values["current"]
+                if not math.isfinite(power):
+                    power = None
+                    issues.append('INVALID_COMPUTED_POWER')
             samples.append({"sequence": len(samples) + 1, "line": line, "timestamp": timestamp,
                             "phase": state, "segment": segment, **values,
                             "direction": direction or None,

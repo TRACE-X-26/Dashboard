@@ -1,5 +1,7 @@
 # Mac dashboard and Pi sensor receiver
 
+Update: the current plain-text STM32 format is supported without firmware changes. See [plain-text motor verification and launch commands](STM32_PLAIN_TEXT_MOTOR.md). The live motor tiles now use complete encoder-anchored receive cycles; older per-channel descriptions below remain relevant to the observation table.
+
 The existing dashboard runs on the Mac. Run the FastAPI backend on the Raspberry Pi; it owns the STM32 USB serial connection. The Mac's Vite proxy forwards API/WebSocket traffic to the Pi. Algorithms and SQLite remain on the backend. No browser GPIO or serial access is required.
 
 This increment implements passive motor telemetry reception and data-quality display, not verified motor/circuit health or remote physical control. It is opt-in; simulation defaults remain. The repository communication-only firmware does not publish sensor data. Use the team's existing sensor-reporting firmware only after identifying its source/version. Do not flash the repository image over it expecting live sensors.

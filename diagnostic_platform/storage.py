@@ -77,6 +77,15 @@ class DiagnosticStore:
                 original_csv TEXT NOT NULL,
                 result_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS circuit_assets (
+                asset_id TEXT PRIMARY KEY,
+                asset_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS circuit_captures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL DEFAULT 0,
+                session_json TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_measurements_session
                 ON measurements(session_id, sequence);
             CREATE INDEX IF NOT EXISTS idx_sessions_device
@@ -318,3 +327,35 @@ class DiagnosticStore:
         if row is None:
             raise KeyError(recording_id)
         return {"id": recording_id, **json.loads(row["result_json"])}
+
+    def save_circuit_asset(self, asset: dict) -> None:
+        self.connection.execute('INSERT INTO circuit_assets VALUES (?,?) ON CONFLICT(asset_id) DO UPDATE SET asset_json=excluded.asset_json',
+                                (asset['asset_id'], json.dumps(asset, allow_nan=False)))
+        self.connection.commit()
+
+    def circuit_assets(self) -> list[dict]:
+        return [json.loads(row[0]) for row in self.connection.execute('SELECT asset_json FROM circuit_assets ORDER BY asset_id')]
+
+    def create_circuit_capture(self, session: dict) -> dict:
+        cursor = self.connection.execute('INSERT INTO circuit_captures(session_json) VALUES (?)', (json.dumps(session, allow_nan=False),))
+        self.connection.commit()
+        return self.circuit_capture(cursor.lastrowid)
+
+    def circuit_capture(self, session_id: int) -> dict:
+        row = self.connection.execute('SELECT * FROM circuit_captures WHERE id=?', (session_id,)).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return {**json.loads(row['session_json']), 'id': row['id'], 'version': row['version']}
+
+    def circuit_capture_history(self) -> list[dict]:
+        rows = self.connection.execute('SELECT id FROM circuit_captures ORDER BY id DESC LIMIT 100').fetchall()
+        return [self.circuit_capture(row[0]) for row in rows]
+
+    def update_circuit_capture(self, session: dict) -> dict:
+        cursor = self.connection.execute('UPDATE circuit_captures SET session_json=?,version=version+1 WHERE id=? AND version=?',
+                                        (json.dumps(session, allow_nan=False), session['id'], session['version']))
+        if cursor.rowcount != 1:
+            self.connection.rollback()
+            raise ValueError('Capture changed; reload the test before continuing')
+        self.connection.commit()
+        return self.circuit_capture(session['id'])

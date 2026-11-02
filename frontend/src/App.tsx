@@ -6,6 +6,7 @@ import {
 import { api, testSocket } from './api'
 import HistoricalRecordings from './HistoricalRecordings'
 import LiveSensors from './LiveSensors'
+import PhysicalCircuit from './PhysicalCircuit'
 import type { Baseline, CircuitProfile, CircuitReport, Finding, Measurement, MeterReading, MotorStatus, Profile, Report, Session, SessionDetail } from './types'
 
 type Page = 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles' | 'recordings' | 'sensors'
@@ -190,7 +191,7 @@ function LiveMultimeter() {
   </>
 }
 
-function CircuitDiagnostics() {
+function CircuitDiagnostics({ hardware, setHardware }: { hardware: boolean; setHardware: (value: boolean) => void }) {
   const [profiles, setProfiles] = useState<CircuitProfile[]>([])
   const [scenarios, setScenarios] = useState<string[]>([])
   const [profileId, setProfileId] = useState('')
@@ -213,7 +214,11 @@ function CircuitDiagnostics() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Unable to start circuit test.') }
   }
 
+  const sourcePicker = <div className="source-picker" role="group" aria-label="Circuit data source"><button className={hardware ? 'secondary' : 'primary'} onClick={() => setHardware(false)}>Simulation</button><button className={hardware ? 'primary' : 'secondary'} onClick={() => setHardware(true)}>Physical circuit capture</button></div>
+  if (hardware) return <>{sourcePicker}<PhysicalCircuit/></>
+
   return <>
+    {sourcePicker}
     <header><div><p className="eyebrow">GUIDED TROUBLESHOOTING</p><h1>Circuit diagnostics</h1><p>Follow a safe probe sequence and turn measurements into a clear fault diagnosis.</p></div><Status value={finished ? report?.condition ?? null : report ? 'RUNNING' : 'READY'} /></header>
     <section className="circuit-setup panel"><label>Circuit profile<select value={profileId} onChange={event => { setProfileId(event.target.value); setReport(null) }}>{profiles.map(item => <option value={item.profile_id} key={item.profile_id}>{item.name}</option>)}</select></label><label>Workflow mode<select value={mode} onChange={event => { const next = event.target.value as 'LEARN' | 'DIAGNOSE'; setMode(next); if (next === 'LEARN') setScenario('healthy'); setReport(null) }}><option value="DIAGNOSE">Diagnose a circuit</option><option value="LEARN">Learn healthy behavior</option></select></label><label>Simulation fault<select value={scenario} disabled={mode === 'LEARN'} onChange={event => { setScenario(event.target.value); setReport(null) }}>{scenarios.map(item => <option value={item} key={item}>{item.replaceAll('_', ' ')}</option>)}</select></label><button className="primary" onClick={start} disabled={!profileId}>Start guided test</button></section>
     {error && <p className="circuit-error">{error}</p>}
@@ -329,6 +334,7 @@ function Profiles({ profiles, baselines, refresh }: { profiles: Profile[]; basel
 
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard')
+  const [circuitHardware, setCircuitHardware] = useState(false)
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [scenarios, setScenarios] = useState<string[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
@@ -344,11 +350,11 @@ export default function App() {
     if (page === 'recordings') return <HistoricalRecordings/>
     if (page === 'control') return <MotorControl/>
     if (page === 'meter') return <LiveMultimeter/>
-    if (page === 'circuit') return <CircuitDiagnostics/>
+    if (page === 'circuit') return <CircuitDiagnostics hardware={circuitHardware} setHardware={setCircuitHardware}/>
     if (page === 'test') return <RunTest profiles={profiles} scenarios={scenarios} onComplete={refresh}/>
     if (page === 'history') return <History sessions={sessions} onBaseline={refresh}/>
     if (page === 'profiles') return <Profiles profiles={profiles} baselines={baselines} refresh={refresh}/>
     return <Dashboard sessions={sessions} refresh={refresh} readiness={{ online, ...receiver }}/>
-  }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver])
-  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor control: simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · Physical motor control disabled</span></div>{content}</main></div>
+  }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver, circuitHardware])
+  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor control: simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'circuit' && circuitHardware ? 'HARDWARE CAPTURE · UNVERIFIED' : page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · Physical motor control disabled</span></div>{content}</main></div>
 }

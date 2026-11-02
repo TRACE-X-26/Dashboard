@@ -4,11 +4,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import threading
 import time
 from datetime import datetime, timezone
 
-from .history import parse_csv
+from .history import FIELDS, parse_csv
+from .text_telemetry import PlainTextMotorParser, SerialLineDecoder
 
 
 class LiveMonitor:
@@ -21,10 +23,16 @@ class LiveMonitor:
         self._connected = False
         self._error = None
         self._channels = {}
+        self._circuit_channels = {}
         self._sequence = 0
         self._phase = 'UNKNOWN'
         self._warnings = []
         self._last_receive = None
+        self._text_motor = PlainTextMotorParser()
+        self._motor_sample = None
+        self._motor_sample_received = None
+        self._complete_motor_frames = 0
+        self._motor_format = 'UNKNOWN'
 
     @staticmethod
     def _open_serial(port, baud):
@@ -33,7 +41,7 @@ class LiveMonitor:
         import serial
         transport = serial.Serial(port, baud, timeout=.25, exclusive=True)
         try:
-            # Kernel exclusion also rejects non-cooperating collector processes.
+            # Kernel exclusion rejects subsequent opens, including non-cooperating readers.
             fcntl.ioctl(transport.fileno(), termios.TIOCEXCL)
         except Exception:
             transport.close()
@@ -58,40 +66,94 @@ class LiveMonitor:
             transport = self.transport_factory(self.port, self.baud)
             with self._lock:
                 self._connected = True
-            buffer = b''
-            dropping = False
+                self._error = None
+                self._invalidate_motor()
+                self._channels.clear()
+                self._circuit_channels.clear()
+                self._text_motor.reset()
+            decoder = SerialLineDecoder()
+            last_byte = time.monotonic()
             while not self._stop.is_set():
                 chunk = transport.read(256)
-                for byte in chunk:
-                    if byte == 10:
-                        if dropping:
-                            with self._lock:
-                                self._warnings = ['FRAME_TOO_LARGE']
-                        elif buffer:
-                            try:
-                                self.feed(buffer.decode('utf-8'))
-                            except UnicodeDecodeError:
-                                with self._lock:
-                                    self._warnings = ['INVALID_UTF8']
-                        buffer, dropping = b'', False
-                    elif not dropping:
-                        buffer += bytes([byte])
-                        if len(buffer) > 4096:
-                            buffer, dropping = b'', True
+                if not chunk:
+                    if time.monotonic() - last_byte > 3:
+                        decoder.reset()
+                        with self._lock:
+                            self._text_motor.reset()
+                            self._warnings = ['SERIAL_TELEMETRY_TIMEOUT']
+                    continue
+                last_byte = time.monotonic()
+                lines, errors = decoder.feed(chunk)
+                if errors:
+                    decoder.reset()
+                    with self._lock:
+                        self._invalidate_motor()
+                        self._text_motor.reset()
+                        self._warnings = errors
+                    continue  # Corruption order within this chunk is unknown; reject the entire chunk.
+                for line in lines:
+                    self.feed(line)
         except Exception as exc:
             with self._lock:
                 self._error = str(exc)
         finally:
-            if transport:
-                transport.close()
-            with self._lock:
-                self._connected = False
+            try:
+                if transport:
+                    transport.close()
+            finally:
+                with self._lock:
+                    self._connected = False
+
+    def _invalidate_motor(self):
+        self._motor_sample = None
+        self._motor_sample_received = None
+        for key in ('voltage', 'current', 'rpm', 'recorded_power', 'input_power', 'encoder_status', 'ina219_status'):
+            self._channels.pop(key, None)
+
+    def _json_motor_sample(self, sample, timestamp, received, frame_format):
+        self._channels.pop('encoder_status', None)
+        self._channels.pop('ina219_status', None)
+        power = sample.get('recorded_power')
+        if power is None:
+            power = sample.get('input_power')
+        values = {'voltage': sample.get('voltage'), 'current': sample.get('current'),
+                  'power': power, 'motor_rpm': sample.get('rpm')}
+        self._motor_format = frame_format
+        self._motor_sample = None
+        if all(type(v) in (int, float) and math.isfinite(v) for v in values.values()):
+            self._motor_sample = {**values, 'encoder_status': 'NOT_REPORTED', 'ina219_status': 'NOT_REPORTED',
+                                  'timestamp': timestamp, 'timestamp_basis': 'HOST_RECEIVE_TIME',
+                                  'source': 'stm32_serial', 'format': frame_format, 'quality': 'UNCALIBRATED',
+                                  'power_origin': 'REPORTED_BY_STM32' if sample.get('recorded_power') is not None else 'CALCULATED_FROM_SAME_JSON_MESSAGE',
+                                  'association': 'STRUCTURED_MESSAGE'}
+            self._motor_sample_received = received
+            self._complete_motor_frames += 1
 
     def feed(self, line: str):
         """Normalize one frame, retaining independent per-channel receipt times."""
         timestamp = datetime.now(timezone.utc).isoformat()
         received = time.monotonic()
         row = {'received_at': timestamp, 'raw_message': line.strip()}
+        text_warnings = []
+        if not line.lstrip().startswith('{'):
+            with self._lock:
+                update = self._text_motor.feed(line, received=received, timestamp=timestamp)
+                text_warnings = update.warnings
+                if update.invalidate:
+                    self._invalidate_motor()
+                if update.recognized:
+                    self._motor_format = 'plain_text'
+                    self._sequence += 1
+                    self._last_receive = received
+                    self._warnings = update.warnings
+                    mapping = {'motor_rpm': 'rpm', 'power': 'recorded_power'}
+                    for field, value in update.changes.items():
+                        self._channels[mapping.get(field, field)] = {'value': value, 'timestamp': timestamp, '_received': received}
+                    if update.sample is not None:
+                        self._motor_sample = update.sample
+                        self._motor_sample_received = received
+                        self._complete_motor_frames += 1
+                    return
         if line.lstrip().startswith('{'):
             try:
                 frame = json.loads(line)
@@ -101,6 +163,9 @@ class LiveMonitor:
                 values = payload.get('result', frame) if isinstance(payload, dict) else frame
                 if not isinstance(values, dict):
                     raise ValueError('Expected measurement object')
+                if str(values.get('mode', '')).upper() == 'CIRCUIT':
+                    self._feed_circuit(values, timestamp, received)
+                    return
                 if 'measurements' in values:
                     from .protocol import decode_message, MessageType
                     from .collector import validate_measurements
@@ -111,6 +176,7 @@ class LiveMonitor:
                     mapping = {'voltage': 'voltage', 'current': 'current', 'power': 'recorded_power',
                                'temperature': 'temperature', 'rpm': 'rpm'}
                     with self._lock:
+                        self._text_motor.reset()
                         self._sequence += 1
                         self._last_receive = received
                         self._warnings = []
@@ -122,11 +188,19 @@ class LiveMonitor:
                             else:
                                 self._channels.pop(key, None)
                                 self._warnings.append(name.upper() + '_INVALID')
+                        self._json_motor_sample({mapping[name]: item['value'] if item['valid'] else None
+                                                 for name, item in measurements.items()}, timestamp, received, 'ads_json_v1')
                     return
+                if any(key in values for aliases in FIELDS.values() for key in aliases):
+                    with self._lock:
+                        self._text_motor.reset()
+                        self._invalidate_motor()
                 row.update({k: v for k, v in values.items() if isinstance(v, (str, int, float))})
                 row['received_at'], row['raw_message'] = timestamp, ''
             except (ValueError, TypeError):
                 with self._lock:
+                    self._invalidate_motor()
+                    self._text_motor.reset()
                     self._warnings = ['INVALID_JSON_FRAME']
                 return
         stream = io.StringIO()
@@ -136,12 +210,13 @@ class LiveMonitor:
         with self._lock:
             self._sequence += 1
             self._last_receive = received
-            self._warnings = sorted({w['code'] for w in parsed['warnings']})
+            self._warnings = sorted({w['code'] for w in parsed['warnings']} | set(text_warnings))
             for event in parsed['events']:
                 self._phase = 'RUNNING' if event['event'] == 'MOTOR_START' else 'AFTER_STOP'
             if 'DEVICE_RESET' in self._warnings:
                 self._phase = 'UNKNOWN'
                 self._channels.clear()
+                self._circuit_channels.clear()
             if 'SENSOR_OR_COMMUNICATION_MESSAGE' in self._warnings:
                 # Do not keep showing a failed sensor's previous value as current.
                 if any(s in line.upper() for s in ('TEMP', 'DS18')):
@@ -152,7 +227,42 @@ class LiveMonitor:
             for sample in parsed['samples']:
                 for key in ('voltage', 'current', 'rpm', 'temperature', 'recorded_power', 'input_power', 'direction'):
                     if sample.get(key) is not None:
+                        if type(sample[key]) in (int, float) and not math.isfinite(sample[key]):
+                            self._channels.pop(key, None)
+                            self._warnings.append(key.upper() + '_INVALID')
+                            continue
                         self._channels[key] = {'value': sample[key], 'timestamp': timestamp, '_received': received}
+                if line.lstrip().startswith('{'):
+                    self._text_motor.reset()
+                    self._json_motor_sample(sample, timestamp, received, 'flat_json')
+
+    def _feed_circuit(self, values, timestamp, received):
+        asset, point = values.get('asset_id'), values.get('test_point_id')
+        if not isinstance(asset, str) or not 1 <= len(asset) <= 80 or not isinstance(point, str) or not 1 <= len(point) <= 40:
+            with self._lock:
+                self._warnings = ['NON_MOTOR_ROW_EXCLUDED', 'CIRCUIT_IDENTIFIERS_REQUIRED']
+            return
+        mapping = {'test_point_voltage_V': 'test_point_voltage', 'circuit_supply_voltage_V': 'circuit_supply_voltage',
+                   'circuit_current_A': 'circuit_current', 'circuit_power_W': 'circuit_power'}
+        with self._lock:
+            self._text_motor.reset()
+            self._sequence += 1
+            self._last_receive = received
+            self._warnings = []
+            for field, channel in mapping.items():
+                if field not in values:
+                    continue
+                key = (asset, point, channel)
+                value = values[field]
+                if type(value) not in (int, float) or not math.isfinite(value) or values.get('valid', True) is not True:
+                    self._circuit_channels.pop(key, None)
+                    self._warnings.append(channel.upper() + '_INVALID')
+                    continue
+                self._circuit_channels[key] = {'asset_id': asset, 'point_id': point, 'channel': channel,
+                                               'value': value, 'timestamp': timestamp, '_received': received,
+                                               'calibration_version': str(values.get('calibration_version', ''))[:80] or None}
+            while len(self._circuit_channels) > 128:
+                self._circuit_channels.pop(next(iter(self._circuit_channels)))
 
     def snapshot(self):
         with self._lock:
@@ -162,10 +272,24 @@ class LiveMonitor:
                             'quality': 'STALE' if now - v['_received'] > 3 or not self._connected else 'UNCALIBRATED'}
                         for k, v in self._channels.items()}
             stale = self._last_receive is None or now - self._last_receive > 3
+            motor_sample = None
+            if self._motor_sample is not None:
+                age = now - self._motor_sample_received
+                motor_sample = {**self._motor_sample, 'hardware_connected': self._connected,
+                                'age_seconds': round(age, 3), 'stale': age > 3 or not self._connected,
+                                'quality': 'STALE' if age > 3 or not self._connected else 'UNCALIBRATED'}
+            circuit_channels = [{k: v for k, v in channel.items() if k != '_received'} |
+                                {'age_seconds': round(now - channel['_received'], 3),
+                                 'quality': 'STALE' if now - channel['_received'] > 3 or not self._connected else 'UNCALIBRATED'}
+                                for channel in self._circuit_channels.values()]
             return {'source': 'HARDWARE_UNVERIFIED', 'enabled': bool(self.port),
                     'connected': self._connected, 'stale': stale, 'error': self._error,
                     'sequence': self._sequence, 'recorded_motor_phase': self._phase,
                     'channels': channels, 'warnings': list(self._warnings),
+                    'circuit_channels': circuit_channels,
+                    'hardware_connected': self._connected, 'motor_sample': motor_sample,
+                    'motor_format': self._motor_format, 'complete_motor_frames': self._complete_motor_frames,
+                    'pending_motor_fields': self._text_motor.missing_fields,
                     'diagnosis': {'status': 'INSUFFICIENT_CALIBRATION', 'health_score': None,
                                   'reason': 'Live channels are not synchronized or calibrated. Motor limits/baseline and circuit asset/test-point mapping require verification.'},
                     'hardware_control': False}
