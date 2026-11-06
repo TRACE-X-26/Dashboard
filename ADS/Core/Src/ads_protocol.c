@@ -261,7 +261,7 @@ static void ADS_Protocol_SendCapabilities(ADS_Protocol *protocol,
       "\"commands\":[\"GET_STATUS\",\"GET_CAPABILITIES\",\"GET_FAULTS\",\"READ_MEASUREMENTS\",\"ARM_TEST\",\"START_TEST\",\"SET_PWM\",\"STOP_TEST\",\"STOP_MOTOR\",\"EMERGENCY_STOP\",\"CLEAR_FAULTS\",\"GET_DEVICE_INFO\",\"GET_SENSOR_DATA\"],"
       "\"ina219_addresses\":{\"MOTOR\":64,\"CIRCUIT\":65},\"integrity\":\"%s\",\"hardware_control\":%s,\"fixed_pwm_percent\":%lu,\"max_duration_ms\":%lu,\"fixed_direction\":\"FORWARD\",\"heartbeat_timeout_ms\":2000,\"temperature_enabled\":%s,\"hardware_block_reason\":\"%s\",\"encoder_calibration\":\"PROVISIONAL_UNTIL_BENCH_VERIFIED\"}}}\n",
       (unsigned long)++protocol->transmit_sequence,(unsigned long)ADS_Protocol_Now(protocol),(unsigned long)reply_to,
-      ADS_FIRMWARE_VERSION,protocol->require_crc?"CRC32":"OPTIONAL_CRC32",t->output_enabled?"true":"false",(unsigned long)t->fixed_pwm,(unsigned long)t->max_duration_ms,ADS_TEMPERATURE_ENABLED?"true":"false",t->disabled_reason);
+      ADS_FIRMWARE_VERSION,protocol->require_crc?"CRC32":"OPTIONAL_CRC32",t->output_enabled?"true":"false",(unsigned long)t->fixed_pwm,(unsigned long)t->max_duration_ms,"false",t->disabled_reason);
     if(written>0 && (size_t)written<sizeof(frame)) ADS_Protocol_Transmit(protocol,frame);
     return;
   }
