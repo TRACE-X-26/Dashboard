@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from './api'
-import type { Recording, RecordingSummary } from './types'
+import type { MotorHealthReplay, Recording, RecordingSummary } from './types'
 
 export default function HistoricalRecordings() {
+  const [replay, setReplay] = useState<MotorHealthReplay | null>(null)
+  const [archivePath, setArchivePath] = useState('')
+  const [replayError, setReplayError] = useState('')
+  const archived = replay?.runs[archivePath]
   const [recordings, setRecordings] = useState<RecordingSummary[]>([])
   const [result, setResult] = useState<Recording | null>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -15,6 +19,7 @@ export default function HistoricalRecordings() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => { api.recordings().then(setRecordings).catch(e => setError(String(e))) }, [])
+  useEffect(() => { api.motorHealthReplay().then(setReplay).catch(e => setReplayError(String(e))) }, [])
   async function importFile() {
     if (!file) return
     setBusy(true); setError('')
@@ -49,6 +54,25 @@ export default function HistoricalRecordings() {
         <option value="">Select recording</option>{recordings.map(r => <option key={r.id} value={r.id}>#{r.id} · {r.metadata.filename} · {r.metadata.condition}</option>)}
       </select></label>
     </section>
+    {(replayError || (replay && Object.keys(replay.runs).length > 0)) && <section className="panel">
+      <h2>Motor test archive replay</h2>
+      {replayError && <p role="alert">{replayError}</p>}
+      {replay && <>
+        <p>Historical results · Baseline pending</p>
+        <p>Tests without archive records: {Object.entries(replay.test_catalog).filter(([, test]) => !test.present_in_archive).map(([id, test]) => `${id} · ${test.name}`).join(', ') || 'None'}</p>
+        <label>Archived run<select value={archivePath} onChange={e => setArchivePath(e.target.value)}>
+          <option value="">Select archived run</option>
+          {Object.entries(replay.runs).map(([path, run]) => <option key={path} value={path}>{run.test_name ?? 'Unknown test'} · {path.split('/').pop()}</option>)}
+        </select></label>
+        {archived && <>
+          <p>Health: {archived.status === 'not_assessed' ? 'Not assessed' : archived.status.replaceAll('_', ' ')} · Recorded PWM target: {archived.target_pwm_percent.join(', ') || 'Unavailable'}{archived.target_pwm_percent.length > 0 ? '%' : ''} · Reported PWM: Unavailable</p>
+          <p>{archived.reasons.map(reason => reason.replaceAll('_', ' ')).join(' · ')}</p>
+          <div className="table-wrap"><table><thead><tr><th>Channel</th><th>Median</th><th>Min</th><th>Max</th><th>Samples</th></tr></thead><tbody>
+            {Object.entries(archived.metrics).map(([name, metric]) => <tr key={name}><td>{name}</td><td>{metric.median}</td><td>{metric.min}</td><td>{metric.max}</td><td>{metric.samples}</td></tr>)}
+          </tbody></table></div>
+        </>}
+      </>}
+    </section>}
     {result && <>
       <section className="panel"><h2>{result.metadata.filename}</h2>
         <p>{result.source} · {result.analysis_status} · {result.samples.length} extracted rows · {result.running_samples} RUNNING rows</p>

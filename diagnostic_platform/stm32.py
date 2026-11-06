@@ -76,9 +76,8 @@ TransportFactory = Callable[[str, int, float], SerialTransport]
 class STM32SerialConnection:
     """Synchronous request/response adapter for the target STM32 protocol.
 
-    The existing firmware does not yet implement this protocol. Motor commands
-    are therefore disabled by default and cannot be enabled through environment
-    configuration in the current release.
+    The checked-in firmware supports read-only requests. Motor commands remain
+    gated pending firmware and electrical safety verification.
     """
 
     CONTROL_COMMANDS = {
@@ -187,7 +186,7 @@ class STM32SerialConnection:
             if self._transport is None:
                 raise ConnectionError("STM32 serial connection is not open")
             self._sequence += 1
-            request = command_message(command_name, self._sequence)
+            request = command_message(command_name, self._sequence, arguments=arguments)
             self._transport.write(encode_message(request))
             return self._await_response(request.sequence)
 
@@ -236,8 +235,8 @@ class STM32SerialConnection:
                 stop_error = exc
         with self._lock:
             if self._transport is not None:
-                self._transport.close()
-                self._transport = None
+                transport, self._transport = self._transport, None
+                transport.close()
             self._capabilities = None
         if stop_error is not None:
             raise SafeDisconnectError(
