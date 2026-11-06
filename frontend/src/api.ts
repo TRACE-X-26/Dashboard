@@ -1,6 +1,6 @@
 import type { AutomatedRun, RegisteredTest } from './types'
 import type { Baseline, CircuitProfile, CircuitReport, CommandAcknowledgment, MeterReading, MotorStatus, Profile, Session, SessionDetail } from './types'
-import type { Recording, RecordingMetadata, RecordingSummary } from './types'
+import type { MotorHealthReplay, Recording, RecordingMetadata, RecordingSummary } from './types'
 import type { PhysicalCircuitAsset, CircuitCapture, CircuitTelemetry, CircuitDiagnostic } from './types'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -38,6 +38,7 @@ export const api = {
   }),
   captureCircuitPoint: (id: number) => request<CircuitCapture>(`/api/circuits/captures/${id}/capture`, { method: 'POST' }),
   liveStatus: () => request<{ enabled: boolean; connected: boolean; stale: boolean }>('/api/live/status'),
+  motorHealthReplay: () => request<MotorHealthReplay>('/api/recordings/motor-health-replay'),
   recordings: () => request<RecordingSummary[]>('/api/recordings'),
   recording: (id: number) => request<Recording>(`/api/recordings/${id}`),
   importRecording: (metadata: RecordingMetadata, content: string) => request<Recording>('/api/recordings', {

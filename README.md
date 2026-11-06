@@ -9,6 +9,8 @@ covers protocol-backed simulated sequences, saved results, CRC32 firmware and
 the Pi installer fix. Physical output remains disabled until commissioning;
 existing simulation controls and dashboard styling are preserved.
 
+See the [live integration and Pi launch guide](docs/LIVE_INTEGRATION.md) for passive and ADS v1 polling, archive replay, and remaining bench checks.
+
 The Pi receiver now reads the STM32's existing plain-text motor output without firmware changes. See [plain-text motor connection and exact Pi launch commands](docs/STM32_PLAIN_TEXT_MOTOR.md). The default connection verifier listens passively; use `--protocol json` only for the existing JSON request/response firmware.
 
 Circuit 4 (LM324 comparator) now has a physical-capture workflow and provisional multi-point rules. See [Circuit 4 setup, references and remaining STM32 integration](docs/CIRCUIT_4_CAPTURE.md). The supplied multimeter evidence is separate from live, end-to-end-verified acquisition.

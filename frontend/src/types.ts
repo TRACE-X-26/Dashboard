@@ -209,7 +209,7 @@ export type CircuitCapture = {
   diagnostic?: CircuitDiagnostic;
 }
 export type CircuitTelemetry = {
-  enabled: boolean; connected: boolean; error: string | null;
+  enabled: boolean; connected: boolean; error: string | null; warnings: string[];
   circuit_channels: { asset_id: string; point_id: string; channel: string; value: number;
     timestamp: string; age_seconds: number; quality: string }[];
 }
@@ -230,4 +230,10 @@ export type ElectricalBranch = {
   calibrated: boolean; timestamp_ms: number | null; started_ms: number | null; sequence: number | null;
   stale?: boolean; age_seconds?: number;
   measurements: Record<string, { value: number | null; unit: string; valid: boolean; timestamp_ms: number }>;
+}
+
+export type MotorHealthReplay = {
+  test_catalog: Record<string, { name: string; planned_pwm_percent: number | null; present_in_archive: boolean }>;
+  runs: Record<string, { test_name: string | null; status: string; target_pwm_percent: number[];
+    reasons: string[]; metrics: Record<string, { median: number; min: number; max: number; samples: number }> }>;
 }

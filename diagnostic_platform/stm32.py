@@ -272,8 +272,8 @@ class STM32SerialConnection:
                 stop_error = exc
         with self._lock:
             if self._transport is not None:
-                self._transport.close()
-                self._transport = None
+                transport, self._transport = self._transport, None
+                transport.close()
             self._capabilities = None
             self._events.clear()
         if stop_error is not None:

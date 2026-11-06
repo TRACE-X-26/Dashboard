@@ -242,4 +242,11 @@ Firmware SHA-256: `14d324de99c979218c0f3a8d20177287666378425a051c15599430b9cfff8
 The .elf.sha256 and .elf.manifest.json files sit alongside the image. The manifest
 records the board configuration fingerprint and disabled output permission.
 The refreshed Pi package is deliverables/Trace-X-Pi.zip, with a checksum alongside.
-All source changes remain local; GitHub was not updated.
+Source publication branch: TRACE-X-26/Dashboard, trace-x-integration-2026-10-30. Generated firmware and Pi ZIP artifacts remain local and Git-ignored.
+
+GitHub reconciliation: the newer archive-replay and live-readout commit was
+merged without replacing its features. Passive and legacy json modes remain;
+ads_json uses the CRC-protected shared-ownership reader. After resolving the
+merge, all 166 tests passed (20.048 seconds), and the frontend build and lint
+passed (656.77 kB JavaScript, 194.64 kB gzip; existing size advisory). Firmware
+sources and the verified ELF were unchanged by this merge.

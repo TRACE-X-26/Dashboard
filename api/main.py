@@ -26,6 +26,7 @@ from diagnostic_platform.control import (
 from diagnostic_platform.circuits import CircuitDiagnosticService
 from diagnostic_platform.measurements import DataSource, motor_measurement_envelopes
 from diagnostic_platform.models import MotorProfile
+from diagnostic_platform.motor_health import load_json
 from diagnostic_platform.multimeter import SimulatedMultimeter
 from diagnostic_platform.sources import SimulatedMotorSource
 from diagnostic_platform.storage import DiagnosticStore
@@ -59,7 +60,8 @@ multimeter = SimulatedMultimeter()
 circuit_service = CircuitDiagnosticService()
 automated_engine = None
 
-live_monitor = LiveMonitor(os.getenv('ADS_LIVE_SERIAL_PORT', '').strip(), settings.serial_baud)
+live_monitor = LiveMonitor(os.getenv('ADS_LIVE_SERIAL_PORT', '').strip(), settings.serial_baud,
+                           protocol=os.getenv('ADS_LIVE_PROTOCOL', 'passive').strip())
 
 
 def now() -> str:
@@ -184,8 +186,9 @@ def live_status() -> dict:
 @app.get('/api/live/motor')
 def live_motor_measurement() -> dict:
     snapshot = live_monitor.snapshot()
-    return {key: snapshot[key] for key in ('hardware_connected', 'motor_sample', 'motor_format',
-                                          'complete_motor_frames', 'pending_motor_fields', 'warnings', 'error', 'hardware_control')}
+    return {key: snapshot[key] for key in ('hardware_connected', 'motor_sample', 'motor_format', 'channels',
+                                          'complete_motor_frames', 'pending_motor_fields', 'warnings', 'error',
+                                          'stale', 'diagnosis', 'hardware_control')}
 
 
 @app.websocket('/ws/live')
@@ -438,6 +441,17 @@ def list_events(limit: int = 100) -> list[dict]:
 def list_recordings() -> list[dict]:
     with open_store() as store:
         return store.list_recordings()
+
+
+@app.get("/api/recordings/motor-health-replay")
+def motor_health_replay() -> dict:
+    path = ROOT / 'data/archive_replay.json'
+    try:
+        return load_json(path)
+    except FileNotFoundError:
+        return {'test_catalog': {}, 'runs': {}}
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail='Motor health replay is invalid') from exc
 
 
 @app.post("/api/recordings", status_code=201)

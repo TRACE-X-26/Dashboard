@@ -4,6 +4,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
+
+from diagnostic_platform.live import LiveMonitor
 
 from diagnostic_platform.protocol import (
     CommandName,
@@ -117,6 +121,49 @@ class FirmwareProtocolCompatibilityTests(unittest.TestCase):
         self.assertEqual(channels['voltage'], dict(value=12.345, unit='V', valid=True, timestamp_ms=42))
         self.assertEqual(channels['current']['value'], -.125)
         self.assertIsNone(channels['temperature']['value'])
+
+    def test_live_polling_normalizes_firmware_measurements_without_motor_commands(self):
+        writes = []
+        stopped = Event()
+
+        class FirmwareTransport:
+            def write(self, request):
+                writes.append(decode_message(request))
+                self.reply = subprocess.check_output(
+                    [str(FirmwareProtocolCompatibilityTests.executable), '--samples'], input=request
+                )
+                return len(request)
+
+            def readline(self):
+                return self.reply
+
+            def close(self):
+                stopped.set()
+
+        monitor = LiveMonitor('/dev/test', protocol='json', transport_factory=lambda *_: FirmwareTransport())
+        # Stop after observing the first complete read, without sleeping or opening USB.
+        snapshots = []
+        original_wait = monitor._stop.wait
+
+        def finish_after_poll(delay):
+            if delay == .5:
+                snapshots.append(monitor.snapshot())
+                monitor._stop.set()
+            return original_wait(delay)
+
+        with patch.object(monitor._stop, 'wait', side_effect=finish_after_poll):
+            monitor._run()
+
+        self.assertTrue(stopped.is_set())
+        self.assertEqual([frame.message_type for frame in writes], [MessageType.HEARTBEAT, MessageType.COMMAND])
+        self.assertEqual(writes[1].payload['command'], 'READ_MEASUREMENTS')
+        snapshot, = snapshots
+        self.assertTrue(snapshot['connected'])
+        self.assertEqual(snapshot['channels']['current']['value'], -.125)
+        self.assertEqual(snapshot['channels']['current']['timestamp_ms'], 43)
+        self.assertNotIn('temperature', snapshot['channels'])
+        self.assertIn('TEMPERATURE_INVALID', snapshot['warnings'])
+        self.assertFalse(monitor.snapshot()['connected'])
 
     def test_malformed_frames_and_serial_resynchronization(self):
         good = encode_message(command_message(CommandName.GET_STATUS, 2))
