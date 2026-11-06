@@ -1,5 +1,10 @@
 # Trace-X motor relay acceptance
 
+November 6 update: see [bounded firmware delivery](BOUNDED_STM32_MOTOR_TEST.md)
+for the new default-disabled command state machine, acquisition adapters and
+remaining physical acceptance gates. Earlier implementation-stage descriptions
+below are historical and do not establish current bench verification.
+
 This is a manual bench procedure, not authorization to flash firmware or run the
 motor. Keep all production motor-control commands disabled. The current change
 performs no flash, GPIO exercise on hardware or motor energization.

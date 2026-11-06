@@ -1,5 +1,9 @@
 # Architecture
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 ## Current system
 
 Phase 1 introduced the shared contracts and orchestration described below. The

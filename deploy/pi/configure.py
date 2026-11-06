@@ -4,10 +4,21 @@ from pathlib import Path
 
 
 def unit_quote(value):
-    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
+
+
+def unit_path(value):
+    # WorkingDirectory is one path, not an ExecStart-style quoted argument list.
+    path = str(Path(value).resolve())
+    if any(c in path for c in ('\n', '\r', '\x00', '"', '\\')):
+        raise ValueError('Unsupported control/quote/backslash in installation path')
+    return path.replace('%', '%%')
 
 
 def configure(project: Path, config: Path):
+    project, config = project.resolve(), config.resolve()
+    unit_path(project)
+    unit_path(config)
     runtime = config / 'trace-x'
     units = config / 'systemd/user'
     autostart = config / 'autostart'
@@ -21,11 +32,14 @@ Description=Trace-X local diagnostic dashboard
 
 [Service]
 Type=simple
-WorkingDirectory={unit_quote(project)}
-EnvironmentFile={unit_quote(environment)}
+WorkingDirectory={unit_path(project)}
+EnvironmentFile={unit_path(environment)}
 ExecStart={unit_quote(project / '.venv-pi/bin/python')} -m uvicorn api.main:app --host 127.0.0.1 --port 13115 --workers 1
 Restart=on-failure
 RestartSec=3
+StandardOutput=journal
+StandardError=journal
+UMask=0077
 TimeoutStopSec=10
 
 [Install]

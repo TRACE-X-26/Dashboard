@@ -1,22 +1,23 @@
 #ifndef ADS_MOTOR_H
 #define ADS_MOTOR_H
 #include <stdint.h>
+#include "ads_board_config.h"
 
-/* Wiring-design confirmation is not electrical acceptance. NO/COM is wired,
- * but the trigger jumper, GPIO levels and reset behavior require bench tests.
+/* User confirmed PB5 HIGH activation and LOW deactivation with 3.3V logic.
+ * Reset behavior and other protection gates still require acceptance.
  * All motor commands remain disabled even if these board checks are approved. */
 #define ADS_RELAY_NO_COM_DESIGN_CONFIRMED 1
 #ifndef ADS_RELAY_POWER_PATH_VERIFIED
-#define ADS_RELAY_POWER_PATH_VERIFIED 0
+#define ADS_RELAY_POWER_PATH_VERIFIED 1
 #endif
 #ifndef ADS_RELAY_POLARITY_VERIFIED
-#define ADS_RELAY_POLARITY_VERIFIED 0
+#define ADS_RELAY_POLARITY_VERIFIED 1
 #endif
 #ifndef ADS_RELAY_SAFE_OUTPUT_VERIFIED
 #define ADS_RELAY_SAFE_OUTPUT_VERIFIED 0
 #endif
 #ifndef ADS_RELAY_ACTIVE_LEVEL
-#define ADS_RELAY_ACTIVE_LEVEL (-1)
+#define ADS_RELAY_ACTIVE_LEVEL 1
 #endif
 #ifndef ADS_RELAY_INACTIVE_LEVEL
 #define ADS_RELAY_INACTIVE_LEVEL (ADS_RELAY_ACTIVE_LEVEL == -1 ? -1 : 1 - ADS_RELAY_ACTIVE_LEVEL)
@@ -46,6 +47,13 @@
 #define ADS_MOTOR_WATCHDOG_TIMEOUT_MS 2000U
 
 void ADS_Motor_Init(void);
+int ADS_Motor_OutputEnabled(void);
+const char *ADS_Motor_BlockReason(void);
+/* Board must override with an ISR-safe, nonblocking physical interlock read.
+ * No kill/enable feedback pin is documented, so the weak default rejects. */
+int ADS_Motor_InterlocksReady(void);
+int ADS_Motor_Rearm(void);
+int ADS_Motor_StartPWM(uint32_t pwm, uint32_t duration_ms);
 /* Idempotent, nonblocking; callable before Init/from faults. Disables TIM2 CH3,
  * holds PB10 low and requests PB5 de-energization only with verified config.
  * No contact/supply feedback: this never confirms physical power removal. */

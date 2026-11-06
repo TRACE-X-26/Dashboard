@@ -1,5 +1,9 @@
 # Current State Audit
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 **Audit date:** October 14, 2026  
 **Target demonstration:** November 20, 2026  
 **Audited scope:** all repository source, configuration, tests, and existing documentation. Hardware was not energized or contacted.

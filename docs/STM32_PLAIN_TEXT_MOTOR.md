@@ -1,5 +1,9 @@
 # Actual STM32 motor readings without changing firmware
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 Implemented November 2, 2026 against the operator-supplied serial format. No files under `ADS/` were changed and no board was flashed or operated. The current firmware can keep sending human-readable text; Python normalizes it for React.
 
 ## Data flow

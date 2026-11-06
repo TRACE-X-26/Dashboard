@@ -58,7 +58,7 @@ export default function PhysicalCircuit() {
   const isCircuit4 = asset?.diagnostic_model === 'circuit4-lm324-v1'
   return <>
     <header><div><p className="eyebrow">HARDWARE CAPTURE · UNVERIFIED</p><h1>Test a physical circuit</h1><p>Configure the built circuit, confirm probe placement, and capture STM32 readings.</p></div></header>
-    <section className="panel"><p>Capture is read-only: it does not energize relays, switch branches, or start a motor. Expected ranges are operator supplied and remain unverified.</p>
+    <section className="panel"><p>Capture is read-only: it does not energize relays, switch branches, or start a motor. Expected ranges are operator supplied and remain unverified. Probe presence and measurement-range switching are unavailable. Resistance/continuity are unsupported without verified excitation and protection.</p>
       <div className="control-bar"><label>Built circuit<select value={selected} disabled={busy || session?.state === 'IN_PROGRESS'} onChange={e => setSelected(e.target.value)}><option value="">Choose circuit</option>{assets.map(a => <option key={a.asset_id} value={a.asset_id}>{a.name}</option>)}</select></label>
         <button className="secondary" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? 'Close configuration' : 'Add circuit definition'}</button>
         <button className="primary" disabled={!asset || busy || session?.state === 'IN_PROGRESS' || (isCircuit4 && !conditionsConfirmed)} onClick={() => action(() => api.startCircuitCapture(selected, conditionsConfirmed))}>Start capture session</button>

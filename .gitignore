@@ -83,3 +83,6 @@ dist/
 *.tgz
 /docs/TRACE_X_DATA_INVENTORY.json
 /docs/TRACE_X_RECORDING_AUDIT.md
+
+# Runtime automated-test process ownership lock
+*.automation.lock

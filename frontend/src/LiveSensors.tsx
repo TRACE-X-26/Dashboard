@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import INA219Readings from './INA219Readings'
+import type { ElectricalBranch } from './types'
 
 type LiveState = {
+  ina219?: Record<string, ElectricalBranch>;
   enabled: boolean; connected: boolean; stale: boolean; error: string | null;
   sequence: number; recorded_motor_phase: string; warnings: string[];
   channels: Record<string, { value: number | string; quality: string; timestamp: string; age_seconds: number }>;
@@ -41,6 +44,7 @@ export default function LiveSensors() {
       <div className="metric"><span>Branch current</span><strong>{show(sample?.current, 3)}<small> A</small></strong></div>
       <div className="metric"><span>Input power</span><strong>{show(sample?.power, 3)}<small> W</small></strong></div>
     </section>
+    <INA219Readings branches={state?.ina219} fresh={!!online && !!state?.hardware_connected && !state?.stale}/>
     <section className="panel"><h2>Connection</h2>
       <p>{!online ? 'Dashboard stream disconnected' : !state?.enabled ? 'Pi serial monitoring is not configured' : !state.connected ? 'Serial disconnected' : state.stale ? 'Serial open; telemetry missing or stale' : 'Receiving unverified hardware telemetry'}</p>
       <p>Recorded motor event state: {online ? state?.recorded_motor_phase : 'Unknown'} · Received frames: {state?.sequence ?? 0}</p>

@@ -10,7 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[2]
 EXCLUDED = {'.git', '.venv', '.venv-pi', 'node_modules', '__pycache__', '.metadata',
-            'Debug', 'Release', 'TraceX.app', '.pytest_cache', 'deliverables', '.agents', '.codex', '.aws'}
+            'Debug', 'Release', 'build', 'TraceX.app', '.pytest_cache', 'deliverables', '.agents', '.codex', '.aws'}
 
 
 def build_bundle(output: Path, recordings: Path | None = None):
@@ -26,7 +26,7 @@ def build_bundle(output: Path, recordings: Path | None = None):
                 continue
             if path.resolve() == output.resolve() or path.name.startswith('.env') or path.name == '.DS_Store':
                 continue
-            if path.suffix in {'.db', '.pyc', '.tsbuildinfo', '.zip'} or path.name.endswith(('.db-wal', '.db-shm')):
+            if path.name.endswith('.automation.lock') or path.suffix in {'.db', '.pyc', '.tsbuildinfo', '.zip'} or path.name.endswith(('.db-wal', '.db-shm')):
                 continue
             archive.write(path, 'Trace-X/' + relative.as_posix())
         archive.write(ROOT / '.env.example', 'Trace-X/.env.example')

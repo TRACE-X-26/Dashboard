@@ -1,5 +1,9 @@
 # Hardware Capabilities and Verification Matrix
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 This document combines the existing Fritzing inspection with the target platform named in the development brief. It does not certify wiring or hardware behavior.
 
 ## Target platform

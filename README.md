@@ -1,5 +1,14 @@
 # Software-Defined Diagnostic Platform
 
+Latest sensor update: [dual INA219 0x40/0x41 integration and verification](docs/DUAL_INA219_INTEGRATION.md), firmware 0.4.2-dual-ina219. Earlier firmware hashes and sizes below are historical.
+
+November 6 motor-control update: [current configuration, flashing and Pi instructions](docs/DASHBOARD_MOTOR_CONTROL.md). This supersedes the earlier motor settings; temperature is optional, RPM is provisional, and unresolved physical protections still block starts.
+
+The current [automated integration guide](docs/FULL_AUTOMATED_INTEGRATION.md)
+covers protocol-backed simulated sequences, saved results, CRC32 firmware and
+the Pi installer fix. Physical output remains disabled until commissioning;
+existing simulation controls and dashboard styling are preserved.
+
 The Pi receiver now reads the STM32's existing plain-text motor output without firmware changes. See [plain-text motor connection and exact Pi launch commands](docs/STM32_PLAIN_TEXT_MOTOR.md). The default connection verifier listens passively; use `--protocol json` only for the existing JSON request/response firmware.
 
 Circuit 4 (LM324 comparator) now has a physical-capture workflow and provisional multi-point rules. See [Circuit 4 setup, references and remaining STM32 integration](docs/CIRCUIT_4_CAPTURE.md). The supplied multimeter evidence is separate from live, end-to-end-verified acquisition.
@@ -205,3 +214,8 @@ The integration branch is `trace-x-integration-2026-10-30` in
 [TRACE-X-26/Dashboard](https://github.com/TRACE-X-26/Dashboard).
 See [publishing and retrieval notes](docs/GITHUB_PUBLICATION.md) for the exact
 clone command and files intentionally kept local.
+
+For the November 6 default-disabled STM32 bounded-test firmware, build results,
+manual flash steps and remaining Pi runner work, see
+[bounded motor-test delivery](docs/BOUNDED_STM32_MOTOR_TEST.md). This is not
+an enabled dashboard motor-control release.

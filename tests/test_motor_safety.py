@@ -25,6 +25,7 @@ class MotorSafetyTests(unittest.TestCase):
                         f'-DADS_RELAY_SAFE_OUTPUT_VERIFIED={safe_output}',
                         str(ROOT / 'ADS/Core/Src/ads_motor.c'),
                         str(ROOT / 'ADS/Core/Src/ads_protocol.c'),
+                        str(ROOT / 'ADS/Core/Src/ads_test.c'),
                         str(ROOT / 'tests/motor_safety_harness.c'), '-o', executable],
                         check=True, capture_output=True)
                     for scenario in ["startup", "watchdog", "fault", "wrap", "protocol", "late", "fault-before-init"]:
@@ -58,7 +59,7 @@ class MotorSafetyTests(unittest.TestCase):
     def test_startup_and_fault_handlers_use_the_stop_interface(self):
         main = (ROOT / 'ADS/Core/Src/main.c').read_text()
         self.assertLess(main.index('  ADS_Motor_Init();'), main.index('  SystemClock_Config();'))
-        self.assertIn('ADS_Protocol_SetHardwareCallbacks(&ads_protocol, NULL, ADS_StopMotor)', main)
+        self.assertIn('ADS_Protocol_SetHardwareCallbacks(&ads_protocol, ADS_Sensors_Acquire, ADS_StopMotor)', main)
         self.assertIn('ADS_Motor_Fault();', main[main.index('void Error_Handler(void)'):])
         handlers = (ROOT / 'ADS/Core/Src/stm32f4xx_it.c').read_text()
         for name in ['NMI', 'HardFault', 'MemManage', 'BusFault', 'UsageFault']:

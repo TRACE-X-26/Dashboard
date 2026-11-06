@@ -78,3 +78,16 @@ class DeploymentTests(unittest.TestCase):
             env.write_text('ADS_LIVE_SERIAL_PORT=/dev/custom\n')
             configure(project, config)
             self.assertEqual(env.read_text(), 'ADS_LIVE_SERIAL_PORT=/dev/custom\n')
+
+    def test_working_directory_is_unquoted_absolute_and_percent_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project=Path(directory)/'Trace X % station'
+            config=Path(directory)/'config'
+            configure(project,config)
+            service=(config/'systemd/user/trace-x.service').read_text()
+            line=next(line for line in service.splitlines() if line.startswith('WorkingDirectory='))
+            self.assertEqual(line,'WorkingDirectory='+str(project.resolve()).replace('%','%%'))
+            self.assertNotIn('WorkingDirectory="',service)
+            self.assertIn('StandardOutput=journal',service)
+            self.assertTrue((config/'trace-x/runtime.env').exists())
+            with self.assertRaises(ValueError):configure(Path(directory)/'bad\npath',config)

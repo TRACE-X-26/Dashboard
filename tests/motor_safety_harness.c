@@ -32,7 +32,7 @@ void HAL_GPIO_Init(GPIO_TypeDef *port, GPIO_InitTypeDef *gpio)
   } else {
     assert(gpio->Pin == GPIO_PIN_5);
     relay_mode = gpio->Mode;
-#if ADS_MOTOR_RELAY_VERIFIED
+#if ADS_RELAY_POLARITY_VERIFIED
     assert(order == 3); /* Relay was preloaded before output was enabled. */
 #else
     assert(order == 2);
@@ -43,7 +43,7 @@ static void assert_stopped(void)
 {
   assert(pwm_mode == GPIO_MODE_OUTPUT_PP && pwm_level == GPIO_PIN_RESET);
   assert(ADS_Motor_RelayConfigured() == ADS_MOTOR_RELAY_VERIFIED);
-#if ADS_MOTOR_RELAY_VERIFIED
+#if ADS_RELAY_POLARITY_VERIFIED
   assert(relay_mode == GPIO_MODE_OUTPUT_PP);
   assert(relay_level == (ADS_RELAY_DISCONNECT_LEVEL ? GPIO_PIN_SET : GPIO_PIN_RESET));
   assert(relay_writes == pwm_writes);
@@ -66,6 +66,7 @@ static void feed(ADS_Protocol *protocol, const char *text)
 { for (; *text; text++) ADS_Protocol_ProcessByte(protocol, (uint8_t)*text); }
 int main(int argc, char **argv)
 {
+  assert(!ADS_Motor_OutputEnabled()); /* Unresolved production gates block start. */
   /* Poll before initialization must neither drive GPIO nor arm outputs. */
   ADS_Motor_Poll(5000); assert(pwm_writes == 0);
   if (argc > 1 && strcmp(argv[1], "fault-before-init") == 0) {

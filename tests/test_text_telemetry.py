@@ -226,3 +226,17 @@ class VerifyTextTelemetryTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, 'USB disconnected'):
             verify_telemetry('/dev/test', transport_factory=lambda *_: stream)
         self.assertTrue(stream.closed)
+
+class OptionalTemperatureTests(unittest.TestCase):
+    def test_temperature_zero_and_disconnect_are_independent_of_rpm(self):
+        from diagnostic_platform.live import LiveMonitor
+        monitor=LiveMonitor();monitor._connected=True
+        monitor.feed('Motor Temperature: 0.000 C')
+        self.assertEqual(monitor.snapshot()['channels']['temperature']['value'],0)
+        monitor.feed('TEMPERATURE SENSOR: NOT DETECTED')
+        self.assertNotIn('temperature',monitor.snapshot()['channels'])
+    def test_invalid_temperature_is_not_a_valid_zero(self):
+        from diagnostic_platform.live import LiveMonitor
+        monitor=LiveMonitor();monitor._connected=True
+        monitor.feed('Motor Temperature: 25.000 C');monitor.feed('Motor Temperature: nan C')
+        self.assertNotIn('temperature',monitor.snapshot()['channels'])

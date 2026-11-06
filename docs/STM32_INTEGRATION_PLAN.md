@@ -1,5 +1,10 @@
 # Incremental STM32 Firmware Integration Plan
 
+November 6 update: see [bounded firmware delivery](BOUNDED_STM32_MOTOR_TEST.md)
+for the new default-disabled command state machine, acquisition adapters and
+remaining physical acceptance gates. Earlier implementation-stage descriptions
+below are historical and do not establish current bench verification.
+
 This plan deliberately separates protocol compatibility from physical output.
 Each gate must be reviewed and tested before the next one begins.
 

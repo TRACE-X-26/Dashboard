@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "ads_protocol.h"
 #include "ads_motor.h"
+#include "ads_sensors.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -46,6 +47,11 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 static ADS_Protocol ads_protocol;
+static ADS_Test motor_test;
+/* ISR receives bytes while bounded I2C/one-wire operations and TX execute. */
+static uint8_t rx_byte, rx_ring[1024];
+static volatile uint16_t rx_head, rx_tail;
+static volatile uint8_t rx_fault;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,12 +77,71 @@ static void ADS_StopMotor(void *context)
   ADS_Motor_Stop();
 }
 
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
+{
+  if (uart->Instance!=USART2) return;
+  uint16_t next=(uint16_t)((rx_head+1U)&1023U);
+  if (next==rx_tail) { rx_fault=1; ADS_Motor_Fault(); }
+  else { rx_ring[rx_head]=rx_byte; __DMB(); rx_head=next; }
+  if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) { rx_fault=1; ADS_Motor_Fault(); }
+}
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
+{
+  if (uart->Instance==USART2) { rx_fault=1; ADS_Motor_Fault(); }
+}
+static void ADS_ReceivePoll(void)
+{
+  if (rx_fault) {
+    uint32_t irq=__get_PRIMASK(); __disable_irq();
+    rx_head=rx_tail=0; rx_fault=0;
+    ads_protocol.receive_length=0; ads_protocol.receive_overflow=1;
+    HAL_UART_AbortReceive(&huart2);
+    if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) rx_fault=1;
+    __set_PRIMASK(irq);
+    ADS_Test_Fault(&motor_test,HAL_GetTick(),"UART_RECEIVE_FAULT");
+  }
+  for(unsigned budget=0;budget<512 && rx_tail!=rx_head && !rx_fault;budget++) {
+    uint8_t byte=rx_ring[rx_tail]; __DMB(); rx_tail=(uint16_t)((rx_tail+1U)&1023U);
+    ADS_Protocol_ProcessByte(&ads_protocol,byte);
+  }
+}
+static int ADS_TestReady(void *context)
+{
+  (void)context;
+  return ADS_Motor_InterlocksReady() && ADS_Sensors_Ready();
+}
+static int ADS_TestArm(void *context)
+{
+  (void)context;
+  uint32_t irq=__get_PRIMASK(); __disable_irq();
+  int armed=ADS_Motor_Rearm();
+  __set_PRIMASK(irq);
+  return armed;
+}
+static int ADS_TestStart(uint32_t pwm, uint32_t duration, void *context)
+{
+  (void)context;
+  /* Atomic against SysTick/fault-stop between readiness and activation. */
+  uint32_t irq=__get_PRIMASK(); __disable_irq();
+  int started=ADS_Motor_StartPWM(pwm,duration);
+  __set_PRIMASK(irq);
+  return started;
+}
 static int ADS_UART_Transmit(const uint8_t *data, size_t length, void *context)
 {
   UART_HandleTypeDef *uart = (UART_HandleTypeDef *)context;
-  return HAL_UART_Transmit(uart, (uint8_t *)data, (uint16_t)length, 100U) == HAL_OK
-             ? 0
-             : -1;
+  /* Larger dual-sensor frames must not starve conversion polling. Keep the
+   * existing blocking HAL interface, but service acquisition between bounded
+   * 24-byte chunks (~2.1 ms at 115200). No nested protocol processing here. */
+  while (length) {
+    uint16_t chunk=(uint16_t)(length>24U?24U:length);
+    if (HAL_UART_Transmit(uart,(uint8_t *)data,chunk,100U)!=HAL_OK) {
+      ADS_Motor_Fault(); return -1;
+    }
+    data+=chunk; length-=chunk;
+    ADS_Sensors_Poll(); ADS_Motor_Poll(HAL_GetTick());
+  }
+  return 0;
 }
 
 static uint32_t ADS_GetTick(void *context)
@@ -120,8 +185,24 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   ADS_Protocol_Init(&ads_protocol, ADS_UART_Transmit, ADS_GetTick, &huart2);
-  ADS_Protocol_SetHardwareCallbacks(&ads_protocol, NULL, ADS_StopMotor);
+  ads_protocol.require_crc=1;
+  ADS_Sensors_Init();
+  ADS_Test_Init(&motor_test, ADS_BENCH_PWM_PERCENT, ADS_BENCH_MAX_DURATION_MS,
+                ADS_Motor_OutputEnabled(), ADS_TestReady, ADS_TestStart, ADS_StopMotor, NULL);
+  motor_test.disabled_reason=ADS_Motor_BlockReason();
+  motor_test.arm=ADS_TestArm;
+  ADS_Protocol_SetHardwareCallbacks(&ads_protocol, ADS_Sensors_Acquire, ADS_StopMotor);
+  ADS_Protocol_SetMeasurementInfo(&ads_protocol, ADS_Sensors_Info);
+  ADS_Protocol_SetBranches(&ads_protocol, ADS_Sensors_Branches);
+  ADS_Protocol_SetMotorTest(&ads_protocol, &motor_test);
   ADS_Protocol_SetHeartbeatCallback(&ads_protocol, ADS_HeartbeatMotor);
+  /* Independent watchdog: main-loop lockup resets to disabled startup.
+   * LSI tolerance means the nominal ~2s setting needs bench measurement. */
+  IWDG->KR=0x5555U; IWDG->PR=4U; IWDG->RLR=1000U; IWDG->KR=0xccccU;
+  IWDG->KR=0xaaaaU;
+  HAL_NVIC_SetPriority(USART2_IRQn,1,0);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
+  if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) Error_Handler();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -131,18 +212,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+      IWDG->KR=0xaaaaU;
       ADS_Motor_Poll(HAL_GetTick());
+      ADS_Sensors_Poll();
+      if ((motor_test.running || motor_test.armed) && ADS_Motor_IsLatched())
+        ADS_Test_Fault(&motor_test, HAL_GetTick(), "MCU_SHUTDOWN_LATCHED");
+      ADS_Test_Poll(&motor_test, HAL_GetTick());
+      ADS_Protocol_EmitMotorEvents(&ads_protocol);
 
 #if ADS_PROTOCOL_LEGACY_BANNER_ENABLED
       char msg[] = "STM32 CONNECTED TO PI\r\n";
       HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), 100U);
       HAL_Delay(1000);
 #else
-      uint8_t received_byte;
-      if (HAL_UART_Receive(&huart2, &received_byte, 1U, 1U) == HAL_OK)
-      {
-        ADS_Protocol_ProcessByte(&ads_protocol, received_byte);
-      }
+      ADS_ReceivePoll();
       ADS_Protocol_Poll(&ads_protocol);
 #endif
 	  }

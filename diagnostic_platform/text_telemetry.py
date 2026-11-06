@@ -60,6 +60,16 @@ class PlainTextMotorParser:
             self.reset()
             update.invalidate = True
             return update  # Existing lifecycle parser retains event handling.
+        if line.upper().startswith('TEMPERATURE SENSOR:'):
+            status=line.split(':',1)[1].strip().upper()
+            return TextUpdate(recognized=True,changes={'temperature_status':status},
+                              warnings=[] if status=='CONNECTED' else ['TEMPERATURE_UNAVAILABLE'])
+        if line.lower().startswith('motor temperature:'):
+            match=re.fullmatch(rf'Motor Temperature:\s*({NUMBER})\s*(?:°?C)',line,re.I)
+            value=float(match[1]) if match else None
+            if value is None or not math.isfinite(value) or not -55<=value<=125:
+                return TextUpdate(recognized=True,changes={'temperature_status':'INVALID'},warnings=['TEMPERATURE_UNAVAILABLE'])
+            return TextUpdate(recognized=True,changes={'temperature':value,'temperature_status':'CONNECTED'})
         name, value = None, None
         if line.upper().startswith('ENCODER:'):
             name = 'encoder_status'

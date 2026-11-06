@@ -1,5 +1,9 @@
 # STM32 Firmware and `.ioc` Audit
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 **Inspected:** October 14, 2026
 
 **Project:** `ADS/` in this repository

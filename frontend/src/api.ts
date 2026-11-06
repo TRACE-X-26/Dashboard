@@ -1,3 +1,4 @@
+import type { AutomatedRun, RegisteredTest } from './types'
 import type { Baseline, CircuitProfile, CircuitReport, CommandAcknowledgment, MeterReading, MotorStatus, Profile, Session, SessionDetail } from './types'
 import type { Recording, RecordingMetadata, RecordingSummary } from './types'
 import type { PhysicalCircuitAsset, CircuitCapture, CircuitTelemetry, CircuitDiagnostic } from './types'
@@ -13,6 +14,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  captureSimulatedCircuit: (id: string, index: number) => request<CircuitReport>(`/api/circuits/simulated-runs/${id}/capture?index=${index}`, { method: 'POST' }),
+  testRegistry: (mode: string) => request<RegisteredTest[]>(`/api/automated/registry?mode=${mode}`),
+  hardwareMotorStatus: () => request<{ profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null; max_duration_ms: number; active_run: AutomatedRun | null }>('/api/motor/hardware/status'),
+  automatedRuns: () => request<AutomatedRun[]>('/api/automated/runs'),
+  startAutomated: (configuration: object) => request<AutomatedRun>('/api/automated/runs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(configuration),
+  }),
+  stopAutomated: (id: string, emergency = false) => request(`/api/automated/runs/${id}/stop?emergency=${emergency}`, { method: 'POST' }),
+  automatedRun: (id: string) => request<AutomatedRun>(`/api/automated/runs/${id}`),
   circuit4ReferenceAnalysis: () => request<{ source: string; cases: { label: string; voltages: Record<string, number>; diagnostic: CircuitDiagnostic }[] }>('/api/circuits/circuit4/reference-analysis'),
   circuitTelemetry: () => request<CircuitTelemetry>('/api/live/status'),
   physicalCircuits: () => request<PhysicalCircuitAsset[]>('/api/circuits/assets'),

@@ -37,15 +37,26 @@ class ExperimentRecorder:
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / f'{datetime.now(timezone.utc):%Y%m%dT%H%M%S}_{uuid4().hex}.csv'
         self.file = self.path.open('x', newline='', encoding='utf-8')
-        self.writer = csv.DictWriter(self.file, fieldnames=['received_at', 'test_id', 'channel', 'value', 'unit', 'valid', 'timestamp_ms'])
+        self.writer = csv.DictWriter(self.file, fieldnames=['received_at', 'test_id', 'channel', 'value', 'unit', 'valid', 'timestamp_ms', 'branch', 'address', 'sensor_status', 'connected', 'calibrated'])
         self.writer.writeheader()
         self.file.flush()
 
     def record(self, result):
         measurements = validate_measurements(result)
         timestamp = datetime.now(timezone.utc).isoformat()
-        for channel, item in measurements.items():
-            self.writer.writerow(dict(received_at=timestamp, test_id=self.test_id, channel=channel, **item))
+        from .ina219 import normalize_branches
+        branches=normalize_branches(result)
+        for channel,item in measurements.items():
+            motor=branches['MOTOR'] if channel in ('voltage','current','power') else {}
+            self.writer.writerow(dict(received_at=timestamp,test_id=self.test_id,channel=channel,**item,
+                branch='MOTOR',address=motor.get('address'),sensor_status=motor.get('status'),
+                connected=motor.get('connected'),calibrated=motor.get('calibrated')))
+        if 'ina219' in result:
+            circuit=branches['CIRCUIT']
+            for channel,item in circuit['measurements'].items():
+                self.writer.writerow(dict(received_at=timestamp,test_id=self.test_id,channel=channel,**item,
+                    branch='CIRCUIT',address=circuit['address'],sensor_status=circuit['status'],
+                    connected=circuit['connected'],calibrated=circuit['calibrated']))
         self.file.flush()
 
     def close(self):
@@ -57,11 +68,12 @@ def main():
     import time
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True)
+    parser.add_argument('--crc32',action='store_true',help='Use protected framing for firmware 0.4.0')
     parser.add_argument('--test-id', required=True)
     parser.add_argument('--directory', default='data/experiments')
     args = parser.parse_args()
     recorder = ExperimentRecorder(args.directory, args.test_id)
-    connection = STM32SerialConnection(port=args.port)
+    connection = STM32SerialConnection(port=args.port,require_crc=args.crc32)
     try:
         connection.connect()
         while True:

@@ -206,5 +206,16 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+/* Only encoder A is an interrupt source; B is sampled for direction. */
+void EXTI9_5_IRQHandler(void)
+{
+#if ADS_SENSOR_WIRING_VERIFIED
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_6);
+#endif
+}
+
+extern UART_HandleTypeDef huart2;
+void USART2_IRQHandler(void) { HAL_UART_IRQHandler(&huart2); }
+
 
 /* USER CODE END 1 */

@@ -4,9 +4,12 @@
 static volatile uint32_t last_heartbeat_ms;
 static volatile uint8_t watchdog_ready;
 static volatile uint8_t shutdown_latched;
+static volatile uint8_t run_deadline_active;
+static volatile uint32_t run_start_ms, run_duration_ms;
 
 void ADS_Motor_Stop(void)
 {
+  run_deadline_active = 0;
   GPIO_InitTypeDef gpio = {0};
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
@@ -25,7 +28,7 @@ void ADS_Motor_Stop(void)
   HAL_GPIO_Init(MOTOR_PWM_GPIO_Port, &gpio);
 
   gpio.Pin = MOTOR_RELAY_Pin;
-#if ADS_MOTOR_RELAY_VERIFIED
+#if ADS_RELAY_POLARITY_VERIFIED
   /* Preload before switching the pin to output; never pulse the other level. */
   HAL_GPIO_WritePin(MOTOR_RELAY_GPIO_Port, MOTOR_RELAY_Pin,
                    ADS_RELAY_DISCONNECT_LEVEL ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -57,6 +60,9 @@ void ADS_Motor_Fault(void)
 
 void ADS_Motor_Poll(uint32_t now_ms)
 {
+  if (run_deadline_active && !ADS_Motor_InterlocksReady()) ADS_Motor_Fault();
+  if (run_deadline_active && (uint32_t)(now_ms-run_start_ms)>=run_duration_ms)
+    ADS_Motor_Stop();
   if (watchdog_ready && !shutdown_latched &&
       (uint32_t)(now_ms - last_heartbeat_ms) >= ADS_MOTOR_WATCHDOG_TIMEOUT_MS)
   {
@@ -80,4 +86,61 @@ int ADS_Motor_IsLatched(void)
 int ADS_Motor_RelayConfigured(void)
 {
   return ADS_MOTOR_RELAY_VERIFIED;
+}
+
+__attribute__((weak)) int ADS_Motor_InterlocksReady(void) { return 0; }
+int ADS_Motor_OutputEnabled(void) { return ADS_BOARD_ACCEPTED; }
+const char *ADS_Motor_BlockReason(void)
+{
+  if (!ADS_RELAY_SAFE_OUTPUT_VERIFIED) return "RELAY_RESET_BEHAVIOR_UNVERIFIED";
+  if (!ADS_MOTOR_MAX_CURRENT_MA) return "CURRENT_PROTECTION_UNCONFIGURED";
+  if (!ADS_MOTOR_MIN_VOLTAGE_MV || ADS_MOTOR_MAX_VOLTAGE_MV<=ADS_MOTOR_MIN_VOLTAGE_MV)
+    return "VOLTAGE_PROTECTION_UNCONFIGURED";
+  if (ADS_FORWARD_GPIO_LEVEL!=0 && ADS_FORWARD_GPIO_LEVEL!=1) return "DIRECTION_LEVEL_UNCONFIGURED";
+  if (!ADS_SENSOR_WIRING_VERIFIED || !ADS_INA219_CALIBRATED) return "ELECTRICAL_MEASUREMENT_UNVERIFIED";
+  if (!ADS_KILL_SWITCH_VERIFIED || !ADS_COMM_LOSS_STOP_VERIFIED) return "SHUTDOWN_ACCEPTANCE_REQUIRED";
+  if (!ADS_Motor_InterlocksReady()) return "INTERLOCK_NOT_READY";
+  return ADS_BOARD_ACCEPTED ? "NONE" : "CONTROL_DISABLED";
+}
+
+int ADS_Motor_Rearm(void)
+{
+#if ADS_BOARD_ACCEPTED
+  /* Explicit command adapter only; never called by heartbeat/reconnect/Init. */
+  if (!ADS_Motor_InterlocksReady()) return 0;
+  ADS_Motor_Stop();
+  shutdown_latched=0; last_heartbeat_ms=HAL_GetTick(); watchdog_ready=1;
+  return 1;
+#else
+  return 0;
+#endif
+}
+int ADS_Motor_StartPWM(uint32_t pwm, uint32_t duration_ms)
+{
+#if ADS_BOARD_ACCEPTED
+  GPIO_InitTypeDef gpio={0};
+  if (shutdown_latched || !ADS_Motor_InterlocksReady() || pwm!=ADS_BENCH_PWM_PERCENT || !duration_ms ||
+      duration_ms>ADS_BENCH_MAX_DURATION_MS || HAL_RCC_GetPCLK1Freq()!=42000000U) return 0;
+  ADS_Motor_Stop();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  HAL_GPIO_WritePin(GPIOA,MOTOR_DIRECTION_Pin,ADS_FORWARD_GPIO_LEVEL?GPIO_PIN_SET:GPIO_PIN_RESET);
+  gpio.Pin=MOTOR_DIRECTION_Pin; gpio.Mode=GPIO_MODE_OUTPUT_PP; gpio.Pull=GPIO_NOPULL;
+  gpio.Speed=GPIO_SPEED_FREQ_LOW; HAL_GPIO_Init(GPIOA,&gpio);
+  /* Same 84 MHz / 84 / 1000 = 1 kHz setup as the recovered motor-test project.
+   * Current .ioc intentionally leaves this gated user-code setup ungenerated. */
+  TIM2->PSC=83U; TIM2->ARR=999U; TIM2->CNT=0;
+  TIM2->CCMR2=(6U<<4)|TIM_CCMR2_OC3PE;
+  TIM2->CCER=0; TIM2->CCR3=(1000U*pwm)/100U;
+  TIM2->CR1=TIM_CR1_ARPE; TIM2->EGR=TIM_EGR_UG;
+  gpio.Pin=MOTOR_PWM_Pin; gpio.Mode=GPIO_MODE_AF_PP; gpio.Alternate=GPIO_AF1_TIM2;
+  HAL_GPIO_Init(GPIOB,&gpio);
+  run_start_ms=HAL_GetTick(); run_duration_ms=duration_ms; run_deadline_active=1;
+  /* Direction is established and compare staged with PWM disabled.
+   * Energize the motor branch before enabling the PWM channel. */
+  HAL_GPIO_WritePin(GPIOB,MOTOR_RELAY_Pin,ADS_RELAY_ACTIVE_LEVEL?GPIO_PIN_SET:GPIO_PIN_RESET);
+  TIM2->CCER=TIM_CCER_CC3E; TIM2->CR1|=TIM_CR1_CEN;
+  return 1;
+#else
+  (void)pwm; (void)duration_ms; return 0;
+#endif
 }

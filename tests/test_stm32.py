@@ -157,3 +157,27 @@ class SimulatedSTM32ConnectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class BoundedProtocolAdapterTests(unittest.TestCase):
+    def test_command_arguments_are_preserved_and_events_do_not_steal_reply(self):
+        event=ProtocolMessage(MessageType.EVENT,99,'STM32-ADS',
+            {'event':'MOTOR_STOP','run_id':5,'reason':'COMPLETED'},1000)
+        transport=FakeSerialTransport([encode_message(event)])
+        connection=STM32SerialConnection(port='/dev/test',allow_motor_control=True,
+            command_timeout=.01,transport_factory=lambda *_:transport)
+        connection.connect()
+        args={'pwm_percent':10,'duration_ms':1000,'direction':'FORWARD'}
+        connection.execute('START_TEST',args)
+        self.assertEqual(transport.writes[-1].payload['arguments'],args)
+        self.assertEqual(connection.drain_events(),[event])
+        self.assertEqual(connection.drain_events(),[])
+        connection.disconnect()
+
+    def test_arm_command_remains_gated(self):
+        transport=FakeSerialTransport()
+        connection=STM32SerialConnection(port='/dev/test',transport_factory=lambda *_:transport)
+        connection.connect()
+        with self.assertRaises(HardwareControlDisabled):
+            connection.execute('ARM_TEST')
+        self.assertEqual(transport.writes,[])
+        connection.disconnect()

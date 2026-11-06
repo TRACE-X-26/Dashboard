@@ -1,0 +1,46 @@
+{
+  "device_id": "STM32-ADS",
+  "asset_id": "MOTOR-001",
+  "serial_identity": "",
+  "firmware_version": "0.4.2-dual-ina219",
+  "fixture_id": "",
+  "evidence_id": "",
+  "calibration_id": "",
+  "wiring_verified": true,
+  "relay_verified": true,
+  "interlock_verified": false,
+  "kill_switch_verified": false,
+  "communication_stop_verified": false,
+  "calibration_verified": false,
+  "operator_enable": false,
+  "fixed_pwm_percent": 50,
+  "max_duration_ms": 30000,
+  "limits": {
+    "min_voltage": null,
+    "max_voltage": null,
+    "max_current": null,
+    "max_temperature": null
+  },
+  "baselines": {},
+  "temperature_enabled": false,
+  "motor": {
+    "model": "JGA25-371",
+    "nominal_voltage": 12,
+    "nominal_output_rpm": 130,
+    "driver": "Cytron MD10C R3",
+    "operating_current_reference": 0.5,
+    "operating_current_reference_verified": false
+  },
+  "encoder": {
+    "a_counts_per_motor_revolution": 11,
+    "gear_ratio": 34,
+    "a_counts_per_output_revolution": 374,
+    "calibrated": false
+  },
+  "relay": {
+    "pin": "PB5",
+    "active_level": 1,
+    "inactive_level": 0,
+    "reset_behavior_verified": false
+  }
+}

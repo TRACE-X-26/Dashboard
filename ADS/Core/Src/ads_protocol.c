@@ -1,4 +1,5 @@
 #include "ads_protocol.h"
+#include "ads_board_config.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -6,7 +7,7 @@
 #include <string.h>
 
 #define ADS_DEVICE_ID "STM32-ADS"
-#define ADS_FIRMWARE_VERSION "0.2.0-safe-acquisition"
+#define ADS_FIRMWARE_VERSION "0.4.2-dual-ina219"
 
 static uint32_t ADS_Protocol_Now(const ADS_Protocol *protocol)
 {
@@ -60,10 +61,21 @@ static int parse_value(int parent, unsigned depth)
     { if ((unsigned char)*cursor < 32U || *cursor == '\\' || (unsigned char)*cursor > 126U) return 0; cursor++; }
     if (*cursor++ != '"') return 0;
   }
-  else if (isdigit((unsigned char)*cursor))
+  else if (*cursor == '-' || isdigit((unsigned char)*cursor))
   {
+    if (*cursor == '-') cursor++;
+    if (!isdigit((unsigned char)*cursor)) return 0;
     if (*cursor == '0' && isdigit((unsigned char)cursor[1])) return 0;
     while (isdigit((unsigned char)*cursor)) cursor++;
+    if (*cursor == '.') {
+      cursor++; if (!isdigit((unsigned char)*cursor)) return 0;
+      while (isdigit((unsigned char)*cursor)) cursor++;
+    }
+    if (*cursor == 'e' || *cursor == 'E') {
+      cursor++; if (*cursor=='+' || *cursor=='-') cursor++;
+      if (!isdigit((unsigned char)*cursor)) return 0;
+      while (isdigit((unsigned char)*cursor)) cursor++;
+    }
   }
   else if (strncmp(cursor, "true", 4) == 0) cursor += 4;
   else if (strncmp(cursor, "false", 5) == 0) cursor += 5;
@@ -82,6 +94,11 @@ static const char *ADS_Protocol_FindValue(const char *json, const char *key)
       if (tokens[i].parent == 0 && tokens[i].kind == 'K' &&
           tokens[i].end - tokens[i].start == 9 && memcmp(tokens[i].start, "\"payload\"", 9) == 0)
         { parent = (int)i + 1; break; }
+  if (!strcmp(key, "\"pwm_percent\"") || !strcmp(key, "\"duration_ms\"") || !strcmp(key, "\"direction\"")) {
+    const char *args = ADS_Protocol_FindValue(json, "\"arguments\"");
+    if (!args) return NULL;
+    for (i=0; i<token_count; i++) if (tokens[i].start==args) { parent=(int)i; break; }
+  }
   for (i = 1; i + 1U < token_count; i++)
     if (tokens[i].parent == parent && tokens[i].kind == 'K' &&
         (size_t)(tokens[i].end - tokens[i].start) == strlen(key) &&
@@ -95,6 +112,7 @@ static int ADS_Protocol_ReadUint32(const char *json, const char *key, uint32_t *
   if (!p || !isdigit((unsigned char)*p)) return 0;
   while (isdigit((unsigned char)*p))
   { unsigned d = (unsigned)(*p++ - '0'); if (n > (UINT32_MAX - d) / 10U) return 0; n = n * 10U + d; }
+  if (*p && *p!=',' && *p!='}' && !isspace((unsigned char)*p)) return 0;
   *value = n; return 1;
 }
 static int ADS_Protocol_ReadString(const char *json, const char *key, char *value, size_t size)
@@ -107,12 +125,27 @@ static int ADS_Protocol_ReadString(const char *json, const char *key, char *valu
   memcpy(value, p, n); value[n] = 0; return 1;
 }
 
+static uint32_t ADS_CRC32(const uint8_t *data, size_t size)
+{
+  uint32_t crc=0xffffffffU;
+  for(size_t i=0;i<size;i++) {
+    crc^=data[i];
+    for(unsigned bit=0;bit<8;bit++) crc=(crc>>1)^((crc&1U)?0xedb88320U:0U);
+  }
+  return ~crc;
+}
 static void ADS_Protocol_Transmit(ADS_Protocol *protocol, const char *frame)
 {
   if ((protocol->transmit != NULL) && (frame != NULL))
   {
-    (void)protocol->transmit((const uint8_t *)frame, strlen(frame),
-                             protocol->callback_context);
+    size_t size=strlen(frame);
+    if(protocol->require_crc) {
+      char trailer[12];
+      while(size && (frame[size-1]=='\n' || frame[size-1]=='\r')) size--;
+      snprintf(trailer,sizeof(trailer),"*%08lX\n",(unsigned long)ADS_CRC32((const uint8_t *)frame,size));
+      (void)protocol->transmit((const uint8_t *)frame,size,protocol->callback_context);
+      (void)protocol->transmit((const uint8_t *)trailer,strlen(trailer),protocol->callback_context);
+    } else (void)protocol->transmit((const uint8_t *)frame,size,protocol->callback_context);
   }
 }
 
@@ -137,8 +170,54 @@ static void ADS_Protocol_SendError(ADS_Protocol *protocol, uint32_t reply_to,
   }
 }
 
+
+static void ADS_Protocol_MotorResult(ADS_Protocol *p, uint32_t reply, int accepted, const char *reason, const char *type)
+{
+  char frame[1280];
+  ADS_Test *t=p->motor_test;
+  int n=snprintf(frame,sizeof(frame),
+    "{\"version\":1,\"type\":\"%s\",\"seq\":%lu,\"device_id\":\"STM32-ADS\",\"timestamp_ms\":%lu,"
+    "\"payload\":{\"reply_to\":%lu,\"result\":{\"accepted\":%s,\"reason\":\"%s\",\"state\":\"%s\","
+    "\"requested_pwm_percent\":%lu,\"applied_pwm_percent\":%lu,\"direction\":\"%s\",\"fixed_direction\":\"FORWARD\",\"faults\":%s,"
+    "\"run_id\":%lu,\"started_ms\":%lu,\"stopped_ms\":%lu,\"duration_ms\":%lu,"
+    "\"last_control_seq\":%lu,\"stop_reason\":\"%s\",\"hardware_control\":%s,\"physical_stop_verified\":false}}}\n",
+    type,(unsigned long)++p->transmit_sequence,(unsigned long)ADS_Protocol_Now(p),(unsigned long)reply,
+    accepted?"true":"false",reason,t->state,(unsigned long)t->requested_pwm,(unsigned long)t->applied_pwm,
+    t->output_enabled?"FORWARD":"UNCONFIGURED",t->locked?"[\"MOTOR_LOCKOUT\"]":"[]",
+    (unsigned long)t->run_id,(unsigned long)t->started_ms,(unsigned long)t->stopped_ms,
+    (unsigned long)t->duration_ms,(unsigned long)t->last_control_seq,t->reason,t->output_enabled?"true":"false");
+  if(n>0 && (size_t)n<sizeof(frame)) ADS_Protocol_Transmit(p,frame);
+}
+void ADS_Protocol_SetMotorTest(ADS_Protocol *p, ADS_Test *t) { p->motor_test=t; }
+void ADS_Protocol_SetMeasurementInfo(ADS_Protocol *p, ADS_InfoFn f) { p->info=f; }
+void ADS_Protocol_SetBranches(ADS_Protocol *p, ADS_BranchesFn f) { p->branches=f; }
+void ADS_Protocol_EmitMotorEvents(ADS_Protocol *p)
+{
+  ADS_Test *t=p->motor_test;
+  if(!t) return;
+  for(unsigned which=0;which<2;which++) {
+    uint32_t seq=which?t->stop_event_seq:t->start_event_seq;
+    uint32_t *sent=which?&p->sent_stop_event:&p->sent_start_event;
+    if(seq && seq!=*sent) {
+      char frame[640];
+      int n=snprintf(frame,sizeof(frame),
+        "{\"version\":1,\"type\":\"event\",\"seq\":%lu,\"device_id\":\"STM32-ADS\",\"timestamp_ms\":%lu,"
+        "\"payload\":{\"event\":\"%s\",\"event_sequence\":%lu,\"run_id\":%lu,\"reason\":\"%s\","
+        "\"applied_pwm_percent\":%lu,\"physical_motion_confirmed\":false,\"physical_stop_verified\":false}}\n",
+        (unsigned long)++p->transmit_sequence,(unsigned long)(which?t->stopped_ms:t->started_ms),
+        which?"MOTOR_STOP":"MOTOR_START",(unsigned long)seq,(unsigned long)t->run_id,
+        which?t->reason:"OUTPUT_APPLIED",(unsigned long)(which?0:t->applied_pwm));
+      if(n>0 && (size_t)n<sizeof(frame)) ADS_Protocol_Transmit(p,frame);
+      *sent=seq;
+    }
+  }
+}
+
 static void ADS_Protocol_SendStatus(ADS_Protocol *protocol, uint32_t reply_to)
 {
+  if (protocol->motor_test) {
+    ADS_Protocol_MotorResult(protocol,reply_to,1,"NONE","status"); return;
+  }
   char frame[640];
   const char *state = protocol->safety_state == ADS_PROTOCOL_SAFE_IDLE
                           ? "SAFE_IDLE"
@@ -171,9 +250,21 @@ static void ADS_Protocol_SendStatus(ADS_Protocol *protocol, uint32_t reply_to)
 static void ADS_Protocol_SendCapabilities(ADS_Protocol *protocol,
                                           uint32_t reply_to)
 {
-  char frame[640];
+  char frame[1200];
   int written;
-
+  if (protocol->motor_test) {
+    ADS_Test *t=protocol->motor_test;
+    written=snprintf(frame,sizeof(frame),
+      "{\"version\":1,\"type\":\"capabilities\",\"seq\":%lu,\"device_id\":\"STM32-ADS\",\"timestamp_ms\":%lu,"
+      "\"payload\":{\"reply_to\":%lu,\"result\":{\"device_id\":\"STM32-ADS\",\"firmware_version\":\"%s\","
+      "\"measurement_types\":[\"voltage\",\"current\",\"power\",\"temperature\",\"rpm\"],"
+      "\"commands\":[\"GET_STATUS\",\"GET_CAPABILITIES\",\"GET_FAULTS\",\"READ_MEASUREMENTS\",\"ARM_TEST\",\"START_TEST\",\"SET_PWM\",\"STOP_TEST\",\"STOP_MOTOR\",\"EMERGENCY_STOP\",\"CLEAR_FAULTS\",\"GET_DEVICE_INFO\",\"GET_SENSOR_DATA\"],"
+      "\"ina219_addresses\":{\"MOTOR\":64,\"CIRCUIT\":65},\"integrity\":\"%s\",\"hardware_control\":%s,\"fixed_pwm_percent\":%lu,\"max_duration_ms\":%lu,\"fixed_direction\":\"FORWARD\",\"heartbeat_timeout_ms\":2000,\"temperature_enabled\":%s,\"hardware_block_reason\":\"%s\",\"encoder_calibration\":\"PROVISIONAL_UNTIL_BENCH_VERIFIED\"}}}\n",
+      (unsigned long)++protocol->transmit_sequence,(unsigned long)ADS_Protocol_Now(protocol),(unsigned long)reply_to,
+      ADS_FIRMWARE_VERSION,protocol->require_crc?"CRC32":"OPTIONAL_CRC32",t->output_enabled?"true":"false",(unsigned long)t->fixed_pwm,(unsigned long)t->max_duration_ms,ADS_TEMPERATURE_ENABLED?"true":"false",t->disabled_reason);
+    if(written>0 && (size_t)written<sizeof(frame)) ADS_Protocol_Transmit(protocol,frame);
+    return;
+  }
   protocol->transmit_sequence++;
   written = snprintf(
       frame, sizeof(frame),
@@ -213,12 +304,44 @@ static void ADS_Protocol_SendAck(ADS_Protocol *protocol, uint32_t reply_to,
   }
 }
 
+/* Called only by the foreground protocol owner, never from an interrupt. */
+static size_t ADS_Protocol_Branch(char *out,size_t capacity,const ADS_ElectricalBranch *b)
+{
+  static const char *names[]={"voltage","current","power"};
+  static const char *units[]={"V","A","W"};
+  int valid=b->connected && b->configured && b->samples[0].valid && b->samples[1].valid && b->samples[2].valid;
+  int n=snprintf(out,capacity,
+    "{\"address\":%u,\"connected\":%s,\"configured\":%s,\"status\":\"%s\",\"valid\":%s,"
+    "\"calibrated\":%s,\"sequence\":%lu,\"started_ms\":%lu,\"timestamp_ms\":%lu,\"measurements\":{",
+    b->address,b->connected?"true":"false",b->configured?"true":"false",b->status?b->status:"NOT_INITIALIZED",
+    valid?"true":"false",b->calibrated?"true":"false",(unsigned long)b->sequence,
+    (unsigned long)b->started_ms,(unsigned long)b->completed_ms);
+  if(n<0 || (size_t)n>=capacity) return capacity;
+  size_t used=(size_t)n;
+  for(unsigned i=0;i<3;i++) {
+    char value[40]="null";
+    int good=valid && b->samples[i].milli_value>=-2000000000 && b->samples[i].milli_value<=2000000000;
+    if(good) {
+      int32_t v=b->samples[i].milli_value;
+      unsigned long magnitude=(unsigned long)(v<0?-v:v);
+      snprintf(value,sizeof(value),"%s%lu.%03lu",v<0?"-":"",magnitude/1000U,magnitude%1000U);
+    }
+    n=snprintf(out+used,capacity-used,
+      "%s\"%s\":{\"value\":%s,\"unit\":\"%s\",\"valid\":%s,\"timestamp_ms\":%lu}",
+      i?",":"",names[i],value,units[i],good?"true":"false",(unsigned long)b->samples[i].timestamp_ms);
+    if(n<0 || (size_t)n>=capacity-used) return capacity;
+    used+=(size_t)n;
+  }
+  if(capacity-used<3) return capacity;
+  memcpy(out+used,"}}",3); return used+2;
+}
+
 static void ADS_Protocol_SendMeasurements(ADS_Protocol *protocol, uint32_t reply_to)
 {
   static const char *names[] = {"voltage", "current", "power", "temperature", "rpm"};
   static const char *units[] = {"V", "A", "W", "degC", "rpm"};
   ADS_Sample samples[5] = {{0}};
-  char result[1600];
+  static char result[3072];
   size_t used = 0;
   unsigned i;
   if (protocol->acquire != NULL) protocol->acquire(samples, protocol->callback_context);
@@ -237,9 +360,42 @@ static void ADS_Protocol_SendMeasurements(ADS_Protocol *protocol, uint32_t reply
       "%s\"%s\":{\"value\":%s,\"unit\":\"%s\",\"valid\":%s,\"timestamp_ms\":%lu}",
       i ? "," : "", names[i], value, units[i], valid ? "true" : "false", (unsigned long)samples[i].timestamp_ms);
   }
-  snprintf(result + used, sizeof(result) - used, "}}");
+  if (protocol->info) {
+    ADS_MeasurementInfo info={0};
+    protocol->info(&info,protocol->callback_context);
+    snprintf(result+used,sizeof(result)-used,
+      "},\"sample_sequence\":%lu,\"electrical_sequence\":%lu,\"electrical_started_ms\":%lu,\"electrical_completed_ms\":%lu,"
+      "\"encoder_started_ms\":%lu,\"encoder_completed_ms\":%lu,\"temperature_started_ms\":%lu,\"temperature_completed_ms\":%lu,"
+      "\"voltage_current_calibrated\":%s,\"encoder_calibrated\":%s,\"temperature_calibrated\":%s,"
+      "\"encoder_direction\":\"%s\",\"source\":\"stm32_serial\"}",
+      (unsigned long)info.sample_sequence,(unsigned long)info.electrical_sequence,
+      (unsigned long)info.electrical_started_ms,(unsigned long)info.electrical_completed_ms,
+      (unsigned long)info.encoder_started_ms,(unsigned long)info.encoder_completed_ms,
+      (unsigned long)info.temperature_started_ms,(unsigned long)info.temperature_completed_ms,
+      info.voltage_current_calibrated?"true":"false",info.encoder_calibrated?"true":"false",
+      info.temperature_calibrated?"true":"false",info.encoder_direction?info.encoder_direction:"UNKNOWN");
+  } else snprintf(result + used, sizeof(result) - used, "}}");
+  if (protocol->branches) {
+    ADS_ElectricalBranch branches[2]; memset(branches,0,sizeof(branches));
+    protocol->branches(branches,protocol->callback_context);
+    used=strlen(result)-1; /* Replace only the result object's final brace. */
+    const char *labels[]={"MOTOR","CIRCUIT"};
+    int n=snprintf(result+used,sizeof(result)-used,",\"ina219\":{");
+    if(n<0 || (size_t)n>=sizeof(result)-used) return;
+    used+=(size_t)n;
+    for(unsigned branch=0;branch<2;branch++) {
+      n=snprintf(result+used,sizeof(result)-used,"%s\"%s\":",branch?",":"",labels[branch]);
+      if(n<0 || (size_t)n>=sizeof(result)-used) return;
+      used+=(size_t)n;
+      size_t count=ADS_Protocol_Branch(result+used,sizeof(result)-used,&branches[branch]);
+      if(count>=sizeof(result)-used) return;
+      used+=count;
+    }
+    if(sizeof(result)-used<3) return;
+    memcpy(result+used,"}}",3);
+  }
   {
-    char frame[2048];
+    static char frame[4096];
     int written = snprintf(frame, sizeof(frame),
       "{\"version\":1,\"type\":\"measurement\",\"seq\":%lu,\"device_id\":\"%s\",\"timestamp_ms\":%lu,\"payload\":{\"reply_to\":%lu,\"result\":%s}}\n",
       (unsigned long)++protocol->transmit_sequence, ADS_DEVICE_ID,
@@ -257,7 +413,7 @@ void ADS_Protocol_SetHardwareCallbacks(ADS_Protocol *protocol, ADS_AcquireFn acq
 
 static int ADS_Protocol_IsControlCommand(const char *command)
 {
-  return (strcmp(command, "START_TEST") == 0) ||
+  return !strcmp(command,"CLEAR_FAULTS") || !strcmp(command,"EMERGENCY_STOP") || (strcmp(command, "ARM_TEST") == 0) || (strcmp(command, "START_TEST") == 0) ||
          (strcmp(command, "STOP_TEST") == 0) ||
          (strcmp(command, "SET_PWM") == 0) ||
          (strcmp(command, "SET_DIRECTION") == 0) ||
@@ -311,6 +467,10 @@ static void ADS_Protocol_HandleFrame(ADS_Protocol *protocol, const char *frame)
     protocol->has_received_request = 1U;
     if (protocol->heartbeat != NULL)
       protocol->heartbeat(protocol->last_valid_request_ms, protocol->callback_context);
+    if (protocol->motor_test) {
+      ADS_Test_Heartbeat(protocol->motor_test,protocol->last_valid_request_ms);
+      protocol->safety_state=protocol->motor_test->locked?ADS_PROTOCOL_COMMUNICATION_TIMEOUT:ADS_PROTOCOL_SAFE_IDLE;
+    }
     ADS_Protocol_SendAck(
         protocol, request_sequence,
         protocol->safety_state == ADS_PROTOCOL_SAFE_IDLE ?
@@ -341,23 +501,44 @@ static void ADS_Protocol_HandleFrame(ADS_Protocol *protocol, const char *frame)
   {
     ADS_Protocol_SendStatus(protocol, request_sequence);
   }
-  else if (strcmp(command, "GET_CAPABILITIES") == 0)
+  else if ((strcmp(command, "GET_CAPABILITIES") == 0 || !strcmp(command,"GET_DEVICE_INFO")))
   {
     ADS_Protocol_SendCapabilities(protocol, request_sequence);
   }
   else if (strcmp(command, "GET_FAULTS") == 0)
   {
+    if(protocol->motor_test) {
+      ADS_Protocol_MotorResult(protocol,request_sequence,1,protocol->motor_test->reason,"ack"); return;
+    }
     ADS_Protocol_SendAck(protocol, request_sequence,
                          protocol->safety_state == ADS_PROTOCOL_SAFE_IDLE ?
                          "{\"faults\":[],\"state\":\"SAFE_IDLE\"}" :
                          "{\"faults\":[\"COMMUNICATION_TIMEOUT\"],\"state\":\"COMMUNICATION_TIMEOUT\"}");
   }
-  else if (strcmp(command, "READ_MEASUREMENTS") == 0)
+  else if ((strcmp(command, "READ_MEASUREMENTS") == 0 || !strcmp(command,"GET_SENSOR_DATA")))
   {
     ADS_Protocol_SendMeasurements(protocol, request_sequence);
   }
   else if (ADS_Protocol_IsControlCommand(command))
   {
+    if(protocol->motor_test) {
+      const char *reason="MALFORMED_ARGUMENTS";
+      uint32_t pwm=0,duration=0;
+      char direction[16]="";
+      int accepted;
+      int valid=1;
+      if(!strcmp(command,"START_TEST") || !strcmp(command,"SET_PWM"))
+        valid=ADS_Protocol_ReadUint32(frame,"\"pwm_percent\"",&pwm);
+      if(!strcmp(command,"START_TEST"))
+        valid=valid && ADS_Protocol_ReadUint32(frame,"\"duration_ms\"",&duration) &&
+          ADS_Protocol_ReadString(frame,"\"direction\"",direction,sizeof(direction));
+      if(valid) accepted=ADS_Test_Command(protocol->motor_test,command,request_sequence,pwm,duration,
+                                          direction,ADS_Protocol_Now(protocol),&reason);
+      else accepted=0;
+      ADS_Protocol_MotorResult(protocol,request_sequence,accepted,reason,"ack");
+      ADS_Protocol_EmitMotorEvents(protocol);
+      return;
+    }
     /* Stop requests always attempt shutdown, but cannot claim physical success
      * while relay operation is unverified. Never clear a latched timeout. */
     if ((strcmp(command, "STOP_MOTOR") == 0 || strcmp(command, "STOP_TEST") == 0) && protocol->stop != NULL)
@@ -415,7 +596,23 @@ void ADS_Protocol_ProcessByte(ADS_Protocol *protocol, uint8_t byte)
     else if (protocol->receive_length > 0U)
     {
       protocol->receive_buffer[protocol->receive_length] = '\0';
-      ADS_Protocol_HandleFrame(protocol, protocol->receive_buffer);
+      size_t n=protocol->receive_length;
+      int protected_frame=n>=9 && protocol->receive_buffer[n-9]=='*';
+      int valid=!protocol->require_crc && !protected_frame;
+      if(protected_frame) {
+        uint32_t expected=0; valid=1;
+        for(size_t i=n-8;i<n;i++) {
+          unsigned char ch=(unsigned char)protocol->receive_buffer[i];
+          if(!isxdigit(ch)) { valid=0; break; }
+          expected=(expected<<4)|(isdigit(ch)?(unsigned)(ch-'0'):(unsigned)(tolower(ch)-'a'+10));
+        }
+        n-=9; protocol->receive_buffer[n]=0;
+        valid=valid && ADS_CRC32((const uint8_t *)protocol->receive_buffer,n)==expected;
+      }
+      if(!valid || n>ADS_PROTOCOL_MAX_FRAME_BYTES) {
+        if(protocol->motor_test) ADS_Test_Fault(protocol->motor_test,ADS_Protocol_Now(protocol),"PROTOCOL_INTEGRITY_FAULT");
+        ADS_Protocol_SendError(protocol,0,"CRC32_REQUIRED_OR_INVALID","Frame integrity check failed");
+      } else ADS_Protocol_HandleFrame(protocol, protocol->receive_buffer);
     }
     protocol->receive_length = 0U;
     protocol->receive_overflow = 0U;
@@ -425,7 +622,7 @@ void ADS_Protocol_ProcessByte(ADS_Protocol *protocol, uint8_t byte)
   {
     return;
   }
-  if (protocol->receive_length >= ADS_PROTOCOL_MAX_FRAME_BYTES)
+  if (protocol->receive_length >= ADS_PROTOCOL_MAX_FRAME_BYTES + (protocol->require_crc ? 9U : 0U))
   {
     protocol->receive_overflow = 1U;
     return;
@@ -438,6 +635,11 @@ void ADS_Protocol_Poll(ADS_Protocol *protocol)
   if (protocol == NULL)
   {
     return;
+  }
+  if(protocol->motor_test) {
+    ADS_Test_Poll(protocol->motor_test,ADS_Protocol_Now(protocol));
+    protocol->safety_state=protocol->motor_test->locked ? ADS_PROTOCOL_COMMUNICATION_TIMEOUT : ADS_PROTOCOL_SAFE_IDLE;
+    ADS_Protocol_EmitMotorEvents(protocol); return;
   }
   if ((uint32_t)(ADS_Protocol_Now(protocol) -
                  protocol->last_valid_request_ms) >=

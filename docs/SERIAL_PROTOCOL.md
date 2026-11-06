@@ -1,5 +1,9 @@
 # Raspberry Pi–STM32 Serial Protocol
 
+Current November 6 integration: see [full automated integration](FULL_AUTOMATED_INTEGRATION.md)
+for the current engine, CRC32 firmware, deployment and acceptance status.
+Implementation-stage statements and earlier test counts below are historical.
+
 ## Current compatibility
 
 The repository firmware now implements a communication-only subset of this

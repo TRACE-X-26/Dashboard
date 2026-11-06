@@ -37,6 +37,8 @@ export type Recording = {
 }
 
 export type Measurement = {
+  ina219?: Record<string, ElectricalBranch>;
+  rpm_calibrated?: boolean; temperature_enabled?: boolean;
   sequence: number
   timestamp: string
   voltage: number | null
@@ -57,8 +59,8 @@ export type Finding = {
 
 export type Report = {
   device_id: string
-  health_score: number
-  condition: 'HEALTHY' | 'WARNING' | 'CRITICAL'
+  health_score: number | null
+  condition: 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'INSUFFICIENT_DATA' | 'TEST_INCOMPLETE' | 'FAULT'
   findings: Finding[]
 }
 
@@ -173,6 +175,7 @@ export type CircuitStepResult = CircuitTestPoint & {
 }
 
 export type CircuitReport = {
+  run_id?: string; captured_count?: number; execution_state?: string;
   profile_id: string
   mode: 'LEARN' | 'DIAGNOSE'
   scenario: string
@@ -209,4 +212,22 @@ export type CircuitTelemetry = {
   enabled: boolean; connected: boolean; error: string | null;
   circuit_channels: { asset_id: string; point_id: string; channel: string; value: number;
     timestamp: string; age_seconds: number; quality: string }[];
+}
+
+export type RegisteredTest = { id: string; name: string; available: boolean; unavailable_reason: string; pwm: number | null }
+export type AutomatedRun = {
+  device_state?: string; faults?: string[];
+  id: string; state: string; mode: 'simulation' | 'hardware'; source: string; progress: number;
+  active_test: string | null; reason?: string; condition?: Report['condition']; health_score: number | null;
+  elapsed_seconds?: number; requested_pwm_percent?: number; applied_pwm_percent?: number; device_id?: string;
+  samples?: { received_at: string; quality: string[]; raw: { measurements?: Record<string, { value: number | null }> } }[];
+  ended_at: string | null; latest_measurement?: Measurement; stop_confirmed: boolean;
+  steps: { test_id: string; result?: { findings: string[] } | null }[];
+}
+
+export type ElectricalBranch = {
+  address: number; connected: boolean; configured: boolean; status: string; valid: boolean;
+  calibrated: boolean; timestamp_ms: number | null; started_ms: number | null; sequence: number | null;
+  stale?: boolean; age_seconds?: number;
+  measurements: Record<string, { value: number | null; unit: string; valid: boolean; timestamp_ms: number }>;
 }

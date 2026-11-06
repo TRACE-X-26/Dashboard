@@ -36,6 +36,7 @@ class FirmwareProtocolCompatibilityTests(unittest.TestCase):
                 "-I",
                 str(ROOT / "ADS/Core/Inc"),
                 str(ROOT / "ADS/Core/Src/ads_protocol.c"),
+                str(ROOT / "ADS/Core/Src/ads_test.c"),
                 str(ROOT / "tests/firmware_protocol_harness.c"),
                 "-o",
                 str(cls.executable),

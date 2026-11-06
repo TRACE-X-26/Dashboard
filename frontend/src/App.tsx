@@ -7,7 +7,8 @@ import { api, testSocket } from './api'
 import HistoricalRecordings from './HistoricalRecordings'
 import LiveSensors from './LiveSensors'
 import PhysicalCircuit from './PhysicalCircuit'
-import type { Baseline, CircuitProfile, CircuitReport, Finding, Measurement, MeterReading, MotorStatus, Profile, Report, Session, SessionDetail } from './types'
+import HardwareMotorControls from './HardwareMotorControls'
+import type { AutomatedRun, RegisteredTest, Baseline, CircuitProfile, CircuitReport, Finding, Measurement, MeterReading, MotorStatus, Profile, Report, Session, SessionDetail } from './types'
 
 type Page = 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles' | 'recordings' | 'sensors'
 
@@ -125,7 +126,8 @@ function MotorControl() {
   const state = motor?.state
   const telemetry = motor?.telemetry
   return <>
-    <header><div><p className="eyebrow">MOTOR TEST BENCH</p><h1>Motor control simulator</h1><p>Exercise the same safe command path that will later drive the STM32 and Cytron controller.</p></div><Status value={state?.emergency_stop ? 'SAFETY_TRIP' : state?.enabled ? 'RUNNING' : 'READY'} /></header>
+    <header><div><p className="eyebrow">MOTOR TEST BENCH</p><h1>Motor control</h1><p>Run a permitted STM32 test or use the separately labeled simulator below.</p></div><span className="mode-chip">SEPARATE DATA SOURCES</span></header>
+    <HardwareMotorControls />
     <section className="motor-layout">
       <div className="panel motor-controls">
         <div className="panel-title"><div><h2>Driver controls</h2><p>Commands are checked by backend safety interlocks before being accepted.</p></div><span className="mode-chip">SIMULATION</span></div>
@@ -179,7 +181,7 @@ function LiveMultimeter() {
   const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
 
   return <>
-    <header><div><p className="eyebrow">LIVE INSTRUMENTS</p><h1>Digital multimeter</h1><p>Inspect every planned sensing channel before the physical hardware arrives.</p></div><Status value={online ? hold ? 'HOLD' : 'RUNNING' : 'FAILED'} /></header>
+    <header><div><p className="eyebrow">SIMULATED INSTRUMENTS</p><h1>Digital multimeter</h1><p>Inspect every planned sensing channel before the physical hardware arrives.</p></div><Status value={online ? hold ? 'HOLD' : 'RUNNING' : 'FAILED'} /></header>
     <section className="meter-toolbar"><label>Displayed channel<select value={selected} onChange={event => setSelected(event.target.value)}>{reading?.channels.map(item => <option value={item.channel} key={item.channel}>{item.label} — {item.sensor}</option>)}</select></label><button className={hold ? 'primary' : 'secondary'} onClick={() => setHold(current => !current)}>{hold ? 'Resume sampling' : 'Hold reading'}</button><button className="secondary" onClick={() => setHistory([])}>Clear graph</button></section>
     <section className="meter-layout">
       <div className="panel meter-display"><div className="meter-screen"><span>{channel?.label ?? 'Waiting for channel'}</span><strong>{channel ? fmt(channel.value, channel.unit === 'RPM' ? 0 : 3) : '—'}<small>{channel?.unit}</small></strong><div><i className={online ? 'dot ready' : 'dot danger'}/>{channel?.sensor ?? 'No sensor'}<em>{reading?.motor_enabled ? 'MOTOR ON' : 'MOTOR OFF'}</em></div></div><div className="meter-stats"><div><span>Minimum</span><strong>{fmt(minimum, 3)}</strong></div><div><span>Average</span><strong>{fmt(average, 3)}</strong></div><div><span>Maximum</span><strong>{fmt(maximum, 3)}</strong></div></div>
@@ -225,16 +227,19 @@ function CircuitDiagnostics({ hardware, setHardware }: { hardware: boolean; setH
     {!report && <section className="panel circuit-intro"><div><span>1</span><h2>Select a workflow</h2><p>Use Learn Mode on a known-good circuit or Diagnose Mode to locate a simulated fault.</p></div><div><span>2</span><h2>Follow probe guidance</h2><p>The app identifies the test point, sensor, and safe action for each measurement.</p></div><div><span>3</span><h2>Review the diagnosis</h2><p>Readings are compared with specifications or the learned healthy circuit.</p></div></section>}
     {report && <section className="guided-layout">
       <div className="panel probe-guide">
-        {!finished && current ? <><div className="step-count">STEP {captured + 1} OF {report.steps.length}</div><h2>{current.point_id} · {current.label}</h2><p className="probe-instruction">{current.instruction}</p><div className="probe-diagram"><div className="probe-icon">+</div><span>{current.sensor}</span><div className="probe-line"/><div className="test-point">{current.point_id}</div></div><div className="safety-note">Confirm the probe position before capturing the reading.</div><button className="primary full" onClick={() => setCaptured(value => value + 1)}>Capture simulated reading</button></> : <div className={`circuit-conclusion conclusion-${report.condition.toLowerCase()}`}><span>{report.condition === 'FAULT' ? '!' : '✓'}</span><h2>{report.condition === 'LEARNED' ? 'Baseline learned' : report.condition === 'HEALTHY' ? 'Circuit passed' : 'Fault located'}</h2><p>{report.conclusion}</p>{report.uses_learned_baseline && <small>Compared against the learned healthy baseline.</small>}<button className="secondary" onClick={() => { setReport(null); setCaptured(0) }}>Start another test</button></div>}
+        {!finished && current ? <><div className="step-count">STEP {captured + 1} OF {report.steps.length}</div><h2>{current.point_id} · {current.label}</h2><p className="probe-instruction">{current.instruction}</p><div className="probe-diagram"><div className="probe-icon">+</div><span>{current.sensor}</span><div className="probe-line"/><div className="test-point">{current.point_id}</div></div><div className="safety-note">Confirm the probe position before capturing the reading.</div><button className="primary full" onClick={async () => { try { if (!report.run_id) throw new Error('Backend capture session missing'); const result = await api.captureSimulatedCircuit(report.run_id, captured); setReport(result); setCaptured(result.captured_count ?? 0) } catch (caught) { setError(String(caught)) } }}>Capture simulated reading</button></> : <div className={`circuit-conclusion conclusion-${report.condition.toLowerCase()}`}><span>{report.condition === 'FAULT' ? '!' : '✓'}</span><h2>{report.condition === 'LEARNED' ? 'Baseline learned' : report.condition === 'HEALTHY' ? 'Circuit passed' : 'Fault located'}</h2><p>{report.conclusion}</p>{report.uses_learned_baseline && <small>Compared against the learned healthy baseline.</small>}<button className="secondary" onClick={() => { setReport(null); setCaptured(0) }}>Start another test</button></div>}
       </div>
       <div className="panel test-results"><div className="panel-title"><div><h2>Test-point results</h2><p>{profile?.description}</p></div></div>{report.steps.map((step, index) => <div className={`test-point-result ${index < captured ? `result-${step.result.toLowerCase()}` : ''}`} key={step.point_id}><div className="result-index">{index < captured ? step.result === 'FAIL' ? '!' : '✓' : index + 1}</div><div><strong>{step.point_id} · {step.label}</strong><span>{index < captured ? step.explanation : 'Waiting for measurement'}</span></div><div className="result-reading">{index < captured ? <><strong>{fmt(step.measured, 3)} {step.unit}</strong><small>Expected {fmt(step.expected_min, 2)}–{fmt(step.expected_max, 2)}</small></> : <strong>—</strong>}</div></div>)}</div>
     </section>}
   </>
 }
 
-function RunTest({ profiles, scenarios, onComplete }: { profiles: Profile[]; scenarios: string[]; onComplete: () => void }) {
+function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { profiles: Profile[]; scenarios: string[]; onComplete: () => void; hardware: boolean; setHardware: (value: boolean) => void }) {
   const [device, setDevice] = useState(profiles[0]?.device_id ?? '')
   const [scenario, setScenario] = useState('healthy')
+  const [registry, setRegistry] = useState<RegisteredTest[]>([])
+  const [hardwareRegistry, setHardwareRegistry] = useState<RegisteredTest[]>([])
+  const [automated, setAutomated] = useState<AutomatedRun | null>(null)
   const [samples, setSamples] = useState(30)
   const [measurements, setMeasurements] = useState<Measurement[]>([])
   const [report, setReport] = useState<Report | null>(null)
@@ -249,7 +254,48 @@ function RunTest({ profiles, scenarios, onComplete }: { profiles: Profile[]; sce
   }, [device, profiles])
   useEffect(() => () => socketRef.current?.close(), [])
 
-  function start() {
+  useEffect(() => {
+    api.testRegistry('simulation').then(setRegistry).catch(() => setStatus('Test registry unavailable'))
+    api.testRegistry('hardware').then(setHardwareRegistry).catch(() => setStatus('Hardware registry unavailable'))
+  }, [])
+
+  async function start() {
+    if (scenario.startsWith('auto:') || scenario.startsWith('hardware:')) {
+      const physical = scenario.startsWith('hardware:')
+      if (physical && !window.confirm('Arm and run the selected physical motor test with the commissioned settings?')) return
+      const selection = scenario.split(':')[1]
+      setRunning(true); setMeasurements([]); setReport(null); setProgress(0)
+      try {
+        const run = await api.startAutomated({ mode: physical ? 'hardware' : 'simulation', device_id: device,
+          tests: selection === 'all' ? [] : [selection], run_all: selection === 'all', duration_ms: samples * 100,
+          operator_authorized: physical })
+        setAutomated(run)
+        const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/automated/${run.id}`)
+        socketRef.current = socket
+        socket.onmessage = event => {
+          const update: AutomatedRun = JSON.parse(event.data)
+          setAutomated(update); setStatus(`${update.source} · ${update.state} · ${update.active_test ?? ''} · ${(update.elapsed_seconds ?? 0).toFixed(1)} s · PWM ${update.requested_pwm_percent ?? 0}% requested / ${update.applied_pwm_percent ?? 0}% applied ${update.reason ?? ''}`)
+          setProgress(update.progress)
+          if (update.latest_measurement) {
+            const sample = update.latest_measurement
+            setMeasurements(current => current.at(-1)?.timestamp === sample.timestamp ? current : [...current, sample])
+          }
+          if (update.ended_at) {
+            setRunning(false); socket.close(); socketRef.current = null; onComplete()
+            setReport({ device_id: device, condition: update.condition ?? 'INSUFFICIENT_DATA',
+              health_score: update.health_score,
+              findings: update.steps.flatMap(step => (step.result?.findings ?? []).map(message => ({ code: step.test_id, severity: 'WARNING', message, possible_causes: [] }))) })
+          }
+        }
+        socket.onclose = () => {
+          setRunning(false)
+          api.automatedRun(run.id).then(update => { setAutomated(update); setStatus(`${update.state}: ${update.reason ?? 'Stream closed; check saved results'}`) }).catch(() => setStatus('Telemetry disconnected; completion not confirmed'))
+        }
+        socket.onerror = () => setStatus('Telemetry disconnected; completion not confirmed')
+      } catch (error) { setStatus(String(error)); setRunning(false) }
+      return
+    }
+    setAutomated(null)
     setMeasurements([]); setReport(null); setProgress(0); setRunning(true); setStatus('Connecting')
     const socket = testSocket()
     socketRef.current = socket
@@ -269,19 +315,20 @@ function RunTest({ profiles, scenarios, onComplete }: { profiles: Profile[]; sce
   }
 
   return <>
-    <header><div><p className="eyebrow">SIMULATION LAB</p><h1>Run motor diagnostic</h1><p>Stream realistic measurement data through the same pipeline planned for the STM32.</p></div><Status value={running ? 'RUNNING' : report?.condition ?? 'READY'} /></header>
+    <header><div><p className="eyebrow">{hardware ? 'COMMISSIONED HARDWARE TEST' : 'SIMULATION LAB'}</p><h1>Run motor diagnostic</h1><p>{hardware ? 'Only approved procedures can arm the STM32. No simulation fallback.' : 'Simulated tests are labeled separately from STM32 measurements.'}</p></div><Status value={running ? 'RUNNING' : report?.condition ?? 'READY'} /></header>
     <section className="control-bar">
       <label>Device<select value={device} onChange={e => setDevice(e.target.value)} disabled={running}>{profiles.map(p => <option key={p.device_id}>{p.device_id}</option>)}</select></label>
-      <label>Scenario<select value={scenario} onChange={e => setScenario(e.target.value)} disabled={running}>{scenarios.map(s => <option value={s} key={s}>{s.replaceAll('_', ' ')}</option>)}</select></label>
+      <label>Scenario<select value={scenario} onChange={e => { setScenario(e.target.value); setHardware(e.target.value.startsWith('hardware:')) }} disabled={running}>{scenarios.map(s => <option value={s} key={s}>Simulation: {s.replaceAll('_', ' ')}</option>)}<option value="auto:all">Simulation: run all eligible tests</option>{registry.map(test => <option value={`auto:${test.id}`} key={`auto:${test.id}`} disabled={!test.available} title={test.unavailable_reason}>{test.name}{!test.available ? ` — ${test.unavailable_reason}` : ''}</option>)}<option value="hardware:all" disabled={!hardwareRegistry.some(test => test.available)}>Hardware: run all approved tests</option>{hardwareRegistry.map(test => <option value={`hardware:${test.id}`} key={`hardware:${test.id}`} disabled={!test.available} title={test.unavailable_reason}>Hardware: {test.name}{!test.available ? ` — ${test.unavailable_reason}` : ''}</option>)}</select></label>
       <label>Samples<input type="number" min="5" max="500" value={samples} onChange={e => setSamples(Number(e.target.value))} disabled={running}/></label>
       <button className="primary" onClick={start} disabled={running || !device}>{running ? 'Test running…' : 'Start diagnostic'}</button>
     </section>
     <div className="progress"><span style={{ width: `${progress}%` }}/></div><p className="run-status">{status} · {progress}%</p>
+    {automated && <div className="control-bar"><button className="secondary" disabled={!running} onClick={() => api.stopAutomated(automated.id).catch(error => setStatus(String(error)))}>Stop Test</button><button className="danger" disabled={!running} onClick={() => api.stopAutomated(automated.id, true).catch(error => setStatus(String(error)))}>Emergency Stop</button><button className="secondary" disabled={!automated.ended_at} onClick={() => window.open(`/api/automated/runs/${automated.id}/report`, '_blank')}>Download Report</button></div>}
     <section className="metric-grid five">
       <Metric label="Voltage" value={fmt(latest?.voltage, 2)} unit=" V"/><Metric label="Current" value={fmt(latest?.current, 2)} unit=" A"/><Metric label="Power" value={fmt(latest?.input_power, 1)} unit=" W"/><Metric label="Speed" value={fmt(latest?.rpm, 0)} unit=" RPM"/><Metric label="Temperature" value={fmt(latest?.temperature, 1)} unit=" °C"/>
     </section>
     <section className="split chart-split"><div className="panel"><div className="panel-title"><div><h2>Live signals</h2><p>Electrical and mechanical measurements by sample</p></div></div><SignalChart data={measurements}/></div>
-      <div className="panel findings"><div className="panel-title"><div><h2>Diagnostic analysis</h2><p>{report ? `${report.health_score}% health · ${report.condition}` : 'Waiting for measurement data'}</p></div></div>
+      <div className="panel findings"><div className="panel-title"><div><h2>Diagnostic analysis</h2><p>{report ? `${report.health_score == null ? 'No validated health score' : `${report.health_score}% health`} · ${report.condition}` : 'Waiting for measurement data'}</p></div></div>
         {report?.findings.map(f => <FindingCard finding={f} key={f.code}/>)}{!report && <p className="empty">Start a test to generate explainable findings.</p>}
       </div></section>
   </>
@@ -293,6 +340,9 @@ function FindingCard({ finding }: { finding: Finding }) {
 
 function History({ sessions, onBaseline }: { sessions: Session[]; onBaseline: () => void }) {
   const [selectedId, setSelectedId] = useState<number | null>(sessions[0]?.id ?? null)
+  const [automatedRuns, setAutomatedRuns] = useState<AutomatedRun[]>([])
+  const [automatedDetail, setAutomatedDetail] = useState<AutomatedRun | null>(null)
+  useEffect(() => { api.automatedRuns().then(setAutomatedRuns).catch(() => setMessage('Automated history unavailable')) }, [])
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   const [message, setMessage] = useState('')
   useEffect(() => {
@@ -310,10 +360,10 @@ function History({ sessions, onBaseline }: { sessions: Session[]; onBaseline: ()
     }
   }
   return <><header><div><p className="eyebrow">TEST RECORDS</p><h1>Diagnostic history</h1><p>Inspect stored signals, findings, and health results.</p></div></header>
-    <section className="history-layout"><div className="panel session-list">{sessions.map(s => <button className={selectedId === s.id ? 'session selected' : 'session'} onClick={() => setSelectedId(s.id)} key={s.id}><span><strong>Test #{s.id}</strong><small>{s.device_id} · {s.scenario.replaceAll('_', ' ')}</small></span><Status value={s.condition ?? s.state}/></button>)}</div>
-      <div className="panel detail">{detail ? <><div className="panel-title"><div><h2>Test #{detail.summary.id}</h2><p>{new Date(detail.summary.started_at).toLocaleString()} · {detail.summary.sample_count} samples</p></div><Status value={detail.summary.condition ?? detail.summary.state}/></div>
+    <section className="history-layout"><div className="panel session-list">{automatedRuns.map(run => <button className={automatedDetail?.id === run.id ? 'session selected' : 'session'} onClick={() => api.automatedRun(run.id).then(setAutomatedDetail).catch(error => setMessage(String(error)))} key={run.id}><span><strong>{run.active_test ?? 'Automated sequence'}</strong><small>{run.source} · {run.id.slice(0, 8)}</small></span><Status value={run.state}/></button>)}{sessions.map(s => <button className={selectedId === s.id ? 'session selected' : 'session'} onClick={() => { setAutomatedDetail(null); setSelectedId(s.id) }} key={s.id}><span><strong>Test #{s.id}</strong><small>{s.device_id} · {s.scenario.replaceAll('_', ' ')}</small></span><Status value={s.condition ?? s.state}/></button>)}</div>
+      <div className="panel detail">{automatedDetail ? <><div className="panel-title"><div><h2>Automated test · {automatedDetail.id.slice(0,8)}</h2><p>{automatedDetail.source} · {automatedDetail.device_id} · {automatedDetail.reason ?? automatedDetail.condition}</p></div><Status value={automatedDetail.state}/></div><section className="metric-grid compact"><Metric label="Health" value={automatedDetail.health_score == null ? '—' : String(automatedDetail.health_score)} unit="%"/><Metric label="Source" value={automatedDetail.source}/><Metric label="State" value={automatedDetail.state}/></section><SignalChart data={(automatedDetail.samples ?? []).map((sample,index) => ({ sequence: index+1, timestamp: sample.received_at, voltage: sample.raw.measurements?.voltage?.value ?? null, current: sample.raw.measurements?.current?.value ?? null, rpm: sample.raw.measurements?.rpm?.value ?? null, temperature: sample.raw.measurements?.temperature?.value ?? null, input_power: sample.raw.measurements?.power?.value ?? null, resistance: null, vibration_rms: null }))}/><p>{automatedDetail.stop_confirmed ? 'Software stop acknowledged; physical stop is not measured here.' : 'Stop confirmation unavailable.'}</p><button className="secondary" disabled={!automatedDetail.ended_at} onClick={() => window.open(`/api/automated/runs/${automatedDetail.id}/report`,'_blank')}>Download Report</button></> : detail ? <><div className="panel-title"><div><h2>Test #{detail.summary.id}</h2><p>{new Date(detail.summary.started_at).toLocaleString()} · {detail.summary.sample_count} samples</p></div><Status value={detail.summary.condition ?? detail.summary.state}/></div>
         <section className="metric-grid compact"><Metric label="Health" value={detail.summary.health_score == null ? '—' : String(detail.summary.health_score)} unit="%"/><Metric label="Scenario" value={detail.summary.scenario.replaceAll('_', ' ')}/><Metric label="State" value={detail.summary.state}/></section><SignalChart data={detail.measurements}/><div className="finding-list">{detail.findings.map(f => <FindingCard finding={f} key={f.code}/>)}</div></> : <p className="empty">Select a test.</p>}</div></section>
-    {detail?.summary.state === 'COMPLETE' && <div className="history-actions"><button className="primary" onClick={learnBaseline} disabled={detail.summary.condition !== 'HEALTHY'}>Use this test as healthy baseline</button><span>{message || (detail.summary.condition !== 'HEALTHY' ? 'Only a healthy result can be learned as a baseline.' : '')}</span></div>}
+    {!automatedDetail && detail?.summary.state === 'COMPLETE' && <div className="history-actions"><button className="primary" onClick={learnBaseline} disabled={detail.summary.condition !== 'HEALTHY'}>Use this test as healthy baseline</button><span>{message || (detail.summary.condition !== 'HEALTHY' ? 'Only a healthy result can be learned as a baseline.' : '')}</span></div>}
   </>
 }
 
@@ -335,6 +385,7 @@ function Profiles({ profiles, baselines, refresh }: { profiles: Profile[]; basel
 export default function App() {
   const [page, setPage] = useState<Page>('dashboard')
   const [circuitHardware, setCircuitHardware] = useState(false)
+  const [testHardware, setTestHardware] = useState(false)
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [scenarios, setScenarios] = useState<string[]>([])
   const [sessions, setSessions] = useState<Session[]>([])
@@ -351,10 +402,10 @@ export default function App() {
     if (page === 'control') return <MotorControl/>
     if (page === 'meter') return <LiveMultimeter/>
     if (page === 'circuit') return <CircuitDiagnostics hardware={circuitHardware} setHardware={setCircuitHardware}/>
-    if (page === 'test') return <RunTest profiles={profiles} scenarios={scenarios} onComplete={refresh}/>
+    if (page === 'test') return <RunTest profiles={profiles} scenarios={scenarios} onComplete={refresh} hardware={testHardware} setHardware={setTestHardware}/>
     if (page === 'history') return <History sessions={sessions} onBaseline={refresh}/>
     if (page === 'profiles') return <Profiles profiles={profiles} baselines={baselines} refresh={refresh}/>
     return <Dashboard sessions={sessions} refresh={refresh} readiness={{ online, ...receiver }}/>
-  }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver, circuitHardware])
-  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor control: simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'circuit' && circuitHardware ? 'HARDWARE CAPTURE · UNVERIFIED' : page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · Physical motor control disabled</span></div>{content}</main></div>
+  }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver, circuitHardware, testHardware])
+  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); if (item.key !== 'test') setTestHardware(false); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor controls: separate hardware / simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'control' ? 'MOTOR BENCH · HARDWARE / SIMULATION' : page === 'test' && testHardware ? 'HARDWARE TEST · COMMISSIONING REQUIRED' : page === 'circuit' && circuitHardware ? 'HARDWARE CAPTURE · UNVERIFIED' : page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · {page === 'control' || (page === 'test' && testHardware) ? 'Physical commands require backend prechecks and authorization' : 'Simulation controls / separate hardware monitoring'}</span></div>{content}</main></div>
 }

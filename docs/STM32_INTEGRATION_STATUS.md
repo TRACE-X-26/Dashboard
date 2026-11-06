@@ -1,5 +1,10 @@
 # Trace-X integration status
 
+November 6 update: see [bounded firmware delivery](BOUNDED_STM32_MOTOR_TEST.md)
+for the new default-disabled command state machine, acquisition adapters and
+remaining physical acceptance gates. Earlier implementation-stage descriptions
+below are historical and do not establish current bench verification.
+
 This change extends the existing ADS STM32CubeIDE project. USART2 remains
 115200 8N1 on PA2/PA3. No PWM start or motor activation exists in the checked-in
 main.c. The motor stop interface now configures PB10 at zero duty and gates

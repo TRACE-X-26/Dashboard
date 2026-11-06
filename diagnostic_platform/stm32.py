@@ -15,6 +15,7 @@ from .protocol import (
     command_message,
     decode_message,
     encode_message,
+    unprotect_frame,
 )
 
 
@@ -58,7 +59,16 @@ class PySerialTransport:
             stopbits=1,
             timeout=read_timeout,
             write_timeout=read_timeout,
+            exclusive=True,
         )
+        # Kernel exclusivity also blocks non-cooperating later opens on Linux/macOS.
+        try:
+            import fcntl
+            import termios
+            fcntl.ioctl(self._serial.fileno(), termios.TIOCEXCL)
+        except Exception:
+            self._serial.close()
+            raise
 
     def write(self, data: bytes) -> int:
         return int(self._serial.write(data))
@@ -76,12 +86,15 @@ TransportFactory = Callable[[str, int, float], SerialTransport]
 class STM32SerialConnection:
     """Synchronous request/response adapter for the target STM32 protocol.
 
-    The existing firmware does not yet implement this protocol. Motor commands
-    are therefore disabled by default and cannot be enabled through environment
-    configuration in the current release.
+    ADS v1 framing with request correlation and timestamped firmware events.
+    Physical commands remain disabled by default; the dashboard runtime does
+    not enable this gate. Firmware also requires independent bench acceptance.
     """
 
     CONTROL_COMMANDS = {
+        CommandName.ARM_TEST,
+        CommandName.CLEAR_FAULTS,
+        CommandName.EMERGENCY_STOP,
         CommandName.START_TEST,
         CommandName.STOP_TEST,
         CommandName.SET_PWM,
@@ -98,6 +111,7 @@ class STM32SerialConnection:
         command_timeout: float = 1.5,
         device_id: str = "STM32-ADS",
         allow_motor_control: bool = False,
+        require_crc: bool = False,
         transport_factory: TransportFactory = PySerialTransport,
     ) -> None:
         self.port = port
@@ -106,11 +120,15 @@ class STM32SerialConnection:
         self.command_timeout = command_timeout
         self.device_id = device_id
         self.allow_motor_control = allow_motor_control
+        self.require_crc = require_crc
         self.transport_factory = transport_factory
         self._transport: SerialTransport | None = None
         self._sequence = 0
+        self.last_timestamp_ms = 0
+        self.last_response_frame = ""
         self._lock = threading.Lock()
         self._capabilities: DeviceCapabilities | None = None
+        self._events: list[ProtocolMessage] = []
 
     def connect(self) -> None:
         with self._lock:
@@ -152,7 +170,7 @@ class STM32SerialConnection:
                 {},
                 int(time.time() * 1000),
             )
-            self._transport.write(encode_message(request))
+            self._transport.write(encode_message(request, checksum=self.require_crc))
             return self._await_response(request.sequence)
 
     def probe_legacy_banner(self) -> str:
@@ -187,9 +205,15 @@ class STM32SerialConnection:
             if self._transport is None:
                 raise ConnectionError("STM32 serial connection is not open")
             self._sequence += 1
-            request = command_message(command_name, self._sequence)
-            self._transport.write(encode_message(request))
+            request = command_message(command_name, self._sequence, arguments=arguments)
+            self._transport.write(encode_message(request, checksum=self.require_crc))
             return self._await_response(request.sequence)
+
+    def seed_sequence(self, last_sequence: int) -> None:
+        if type(last_sequence) is not int or not 0 <= last_sequence < 0xffffffff:
+            raise ValueError('Invalid/exhausted MCU request sequence')
+        with self._lock:
+            self._sequence = max(self._sequence,last_sequence)
 
     def _await_response(self, request_sequence: int) -> dict:
         assert self._transport is not None
@@ -198,11 +222,16 @@ class STM32SerialConnection:
             frame = self._transport.readline()
             if not frame:
                 continue
-            message = decode_message(frame)
+            message = decode_message(unprotect_frame(frame, required=self.require_crc))
             if message.device_id != self.device_id:
                 continue
+            self.last_timestamp_ms = message.timestamp_ms
+            if message.message_type is MessageType.EVENT:
+                self._events.append(message)
+                self._events = self._events[-128:]
+                continue
             reply_to = message.payload.get("reply_to")
-            if reply_to != request_sequence:
+            if type(reply_to) is not int or reply_to != request_sequence:
                 continue
             if message.message_type is MessageType.ERROR:
                 code = message.payload.get("code", "DEVICE_ERROR")
@@ -218,10 +247,17 @@ class STM32SerialConnection:
             result = message.payload.get("result", {})
             if not isinstance(result, dict):
                 raise ProtocolError("STM32 response result must be an object")
+            self.last_response_frame=frame.decode('ascii',errors='replace').strip()
             return result
         raise CommunicationTimeout(
             f"STM32 command {request_sequence} timed out after {self.command_timeout:.2f}s"
         )
+
+    def drain_events(self) -> list[ProtocolMessage]:
+        """Events observed during exchanges; this is not a background serial pump."""
+        with self._lock:
+            events, self._events = self._events, []
+            return events
 
     def disconnect(self) -> None:
         with self._lock:
@@ -239,6 +275,7 @@ class STM32SerialConnection:
                 self._transport.close()
                 self._transport = None
             self._capabilities = None
+            self._events.clear()
         if stop_error is not None:
             raise SafeDisconnectError(
                 "Serial connection closed, but STOP_MOTOR was not acknowledged"
@@ -268,7 +305,7 @@ class SimulatedSTM32Connection:
         return DeviceCapabilities(
             "SIM-STM32-ADS",
             ("motor_voltage", "motor_current", "temperature"),
-            tuple(command.value for command in CommandName),
+            tuple(command.value for command in CommandName if command not in {CommandName.ARM_TEST, CommandName.CLEAR_FAULTS, CommandName.EMERGENCY_STOP, CommandName.GET_DEVICE_INFO, CommandName.GET_SENSOR_DATA}),
             "sim-1.0",
         )
 

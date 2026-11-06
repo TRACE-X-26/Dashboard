@@ -93,3 +93,12 @@ class PhysicalCircuitStart(BaseModel):
 class PhysicalCircuitArm(BaseModel):
     point_id: str
     probe_confirmed: Literal[True]
+
+class AutomatedRunPayload(BaseModel):
+    mode: Literal['simulation','hardware'] = 'simulation'
+    device_id: str = Field(default='MOTOR-001',min_length=1,max_length=80)
+    tests: list[str] = Field(default_factory=list,max_length=20)
+    run_all: bool = False
+    duration_ms: int = Field(default=30000,ge=100,le=30000)
+    scenario: Literal['healthy','overloaded','undervoltage','overheating','stalled','sensor_failure','communication_loss'] = 'healthy'
+    operator_authorized: bool = False

@@ -37,9 +37,12 @@ def verify_connection(
     baud: int = 115200,
     *,
     connection_factory: Callable[..., STM32SerialConnection] = STM32SerialConnection,
+    require_crc: bool = False,
 ) -> dict:
     """Explicit JSON request/response checks, retained for API compatibility."""
+    crc_options={'require_crc':True} if require_crc else {}
     connection = connection_factory(
+        **crc_options,
         port=port,
         baud=baud,
         command_timeout=3.0,
@@ -153,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Serial device path. If omitted, the tester searches by-id and ttyACM paths.",
     )
     parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--crc32", action="store_true", help="Require protected ADS v1 frames for current firmware")
     parser.add_argument('--protocol', choices=('auto', 'plain-text', 'json'), default='auto',
                         help='Default auto passively detects text/streamed JSON. json explicitly sends status/capability/fault/heartbeat checks.')
     parser.add_argument('--timeout', type=float, default=6, help='Passive detection timeout in seconds (default 6).')
@@ -163,7 +167,7 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         port = args.port or discover_serial_port()
-        result = verify_connection(port, args.baud) if args.protocol == 'json' else verify_telemetry(
+        result = verify_connection(port, args.baud, require_crc=args.crc32) if args.protocol == 'json' else verify_telemetry(
             port, args.baud, timeout=args.timeout, protocol=args.protocol)
     except Exception as exc:
         print("STM32 CONNECTION TEST: FAILED")

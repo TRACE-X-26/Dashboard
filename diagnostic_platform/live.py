@@ -16,6 +16,7 @@ from .text_telemetry import PlainTextMotorParser, SerialLineDecoder
 class LiveMonitor:
     def __init__(self, port: str = '', baud: int = 115200, transport_factory=None):
         self.port, self.baud = port, baud
+        self._external_active=False
         self.transport_factory = transport_factory or self._open_serial
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -24,6 +25,7 @@ class LiveMonitor:
         self._error = None
         self._channels = {}
         self._circuit_channels = {}
+        self._ina219 = {}
         self._sequence = 0
         self._phase = 'UNKNOWN'
         self._warnings = []
@@ -131,6 +133,12 @@ class LiveMonitor:
 
     def feed(self, line: str):
         """Normalize one frame, retaining independent per-channel receipt times."""
+        from .protocol import unprotect_frame
+        try: line=unprotect_frame(line.encode('utf-8')).decode('utf-8')
+        except ValueError:
+            with self._lock:
+                self._invalidate_motor();self._ina219.clear();self._warnings=['CRC32_INVALID']
+            return
         timestamp = datetime.now(timezone.utc).isoformat()
         received = time.monotonic()
         row = {'received_at': timestamp, 'raw_message': line.strip()}
@@ -146,6 +154,8 @@ class LiveMonitor:
                     self._sequence += 1
                     self._last_receive = received
                     self._warnings = update.warnings
+                    if update.changes.get('temperature_status') not in (None,'CONNECTED'):
+                        self._channels.pop('temperature',None)
                     mapping = {'motor_rpm': 'rpm', 'power': 'recorded_power'}
                     for field, value in update.changes.items():
                         self._channels[mapping.get(field, field)] = {'value': value, 'timestamp': timestamp, '_received': received}
@@ -173,6 +183,8 @@ class LiveMonitor:
                     if message.message_type is not MessageType.MEASUREMENT or message.device_id != 'STM32-ADS':
                         raise ValueError('Unexpected measurement source')
                     measurements = validate_measurements(values)
+                    from .ina219 import normalize_branches
+                    branches=normalize_branches(values)
                     mapping = {'voltage': 'voltage', 'current': 'current', 'power': 'recorded_power',
                                'temperature': 'temperature', 'rpm': 'rpm'}
                     with self._lock:
@@ -180,6 +192,7 @@ class LiveMonitor:
                         self._sequence += 1
                         self._last_receive = received
                         self._warnings = []
+                        self._ina219={name:{**branch,'timestamp':timestamp,'_received':received} for name,branch in branches.items()}
                         for name, item in measurements.items():
                             key = mapping[name]
                             if item['valid']:
@@ -190,6 +203,9 @@ class LiveMonitor:
                                 self._warnings.append(name.upper() + '_INVALID')
                         self._json_motor_sample({mapping[name]: item['value'] if item['valid'] else None
                                                  for name, item in measurements.items()}, timestamp, received, 'ads_json_v1')
+                        if 'ina219' in values:
+                            self._channels['ina219_status']={'value':branches['MOTOR']['status'],'timestamp':timestamp,'_received':received}
+                            if self._motor_sample is not None:self._motor_sample['ina219_status']=branches['MOTOR']['status']
                     return
                 if any(key in values for aliases in FIELDS.values() for key in aliases):
                     with self._lock:
@@ -201,6 +217,7 @@ class LiveMonitor:
                 with self._lock:
                     self._invalidate_motor()
                     self._text_motor.reset()
+                    self._ina219.clear()
                     self._warnings = ['INVALID_JSON_FRAME']
                 return
         stream = io.StringIO()
@@ -264,6 +281,15 @@ class LiveMonitor:
             while len(self._circuit_channels) > 128:
                 self._circuit_channels.pop(next(iter(self._circuit_channels)))
 
+    def publish_acquisition(self,result):
+        """Only the validated hardware command owner calls this, never simulation."""
+        with self._lock:
+            self._external_active=result is not None
+            self._connected=result is not None
+        if result is not None:
+            self.feed(json.dumps(dict(version=1,type='measurement',seq=result.get('sample_sequence',0),
+                device_id='STM32-ADS',timestamp_ms=0,payload={'result':result})))
+
     def snapshot(self):
         with self._lock:
             now = time.monotonic()
@@ -282,11 +308,21 @@ class LiveMonitor:
                                 {'age_seconds': round(now - channel['_received'], 3),
                                  'quality': 'STALE' if now - channel['_received'] > 3 or not self._connected else 'UNCALIBRATED'}
                                 for channel in self._circuit_channels.values()]
-            return {'source': 'HARDWARE_UNVERIFIED', 'enabled': bool(self.port),
+            ina219={}
+            for name,branch in self._ina219.items():
+                age=now-branch['_received'];expired=not self._connected or age>3
+                view={k:v for k,v in branch.items() if k!='_received'}
+                view.update(age_seconds=round(age,3),stale=expired)
+                if expired:
+                    view.update(status='STALE',reported_status=branch['status'],connected=False,valid=False,
+                        measurements={k:{**v,'valid':False,'value':None} for k,v in branch['measurements'].items()})
+                ina219[name]=view
+            return {'source': 'HARDWARE_UNVERIFIED', 'enabled': bool(self.port) or self._external_active,
                     'connected': self._connected, 'stale': stale, 'error': self._error,
                     'sequence': self._sequence, 'recorded_motor_phase': self._phase,
                     'channels': channels, 'warnings': list(self._warnings),
                     'circuit_channels': circuit_channels,
+                    'ina219': ina219,
                     'hardware_connected': self._connected, 'motor_sample': motor_sample,
                     'motor_format': self._motor_format, 'complete_motor_frames': self._complete_motor_frames,
                     'pending_motor_fields': self._text_motor.missing_fields,
