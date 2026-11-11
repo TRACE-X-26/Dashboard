@@ -15,7 +15,7 @@ class MultimeterTests(unittest.TestCase):
         self.assertIn("circuit_current", channels)
         self.assertIn("probe_voltage", channels)
         self.assertIn("resistance", channels)
-        self.assertIn("temperature", channels)
+        self.assertNotIn("temperature", channels)
         self.assertEqual(channels["temperature"]["sensor"], "DS18B20")
 
     def test_motor_channels_follow_control_output(self) -> None:

@@ -393,7 +393,7 @@ def capture_physical_circuit(session_id: int) -> dict:
 
 @app.get("/api/scenarios")
 def scenarios() -> list[str]:
-    return list(SimulatedMotorSource.SCENARIOS)
+    return [name for name in SimulatedMotorSource.SCENARIOS if name != "overheating"]
 
 
 @app.get("/api/baselines")
@@ -446,6 +446,9 @@ def list_recordings() -> list[dict]:
 @app.get("/api/recordings/motor-health-replay")
 def motor_health_replay() -> dict:
     path = ROOT / 'data/archive_replay.json'
+    audited = Path(os.getenv('ADS_MOTOR_DATA_DIR', str(ROOT / 'data/motor_audit'))) / 'archive_replay.json'
+    if audited.is_file():
+        path = audited
     try:
         return load_json(path)
     except FileNotFoundError:

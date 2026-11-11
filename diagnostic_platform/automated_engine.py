@@ -49,8 +49,9 @@ def load_hardware_profile(path):
     if type(profile.get('max_duration_ms')) is not int or not 1<=profile['max_duration_ms']<=30000:
         raise RunRejected('Approved duration required')
     limits=profile.get('limits',{})
-    if type(profile.get('temperature_enabled', True)) is not bool:
-        raise RunRejected('temperature_enabled must be a boolean')
+    if profile.get('temperature_enabled', False) is not False:
+        raise RunRejected('Temperature has been retired; set temperature_enabled to false')
+    profile['temperature_enabled']=False
     for k in ('max_current','min_voltage','max_voltage') + (('max_temperature',) if profile.get('temperature_enabled', True) else ()):
         v=limits.get(k)
         if type(v) not in (int,float) or not math.isfinite(v) or v<=0:raise RunRejected('Validated positive physical limit required: '+k)
@@ -186,7 +187,7 @@ class AutomatedTestEngine:
         except ValueError:
             self.store.sample(run['id'],raw,['INVALID_CHANNELS']);raise
         values={k:(v['value'] if v['valid'] else None) for k,v in channels.items()}
-        temperature_enabled=run['commissioning'].get('temperature_enabled',True)
+        temperature_enabled=False
         required_channels=('voltage','current','power','rpm') + (('temperature',) if temperature_enabled else ())
         if not all(channels[name]['valid'] for name in required_channels):quality.append('INVALID_SENSOR_DATA')
         if type(raw.get('electrical_sequence')) is not int:quality.append('INVALID_SENSOR_DATA')
@@ -236,7 +237,6 @@ class AutomatedTestEngine:
         limits=run['commissioning']['limits']
         faults=[]
         if abs(values['current'])>=limits['max_current']:faults.append('OVERCURRENT')
-        if temperature_enabled and values['temperature']>=limits['max_temperature']:faults.append('OVERHEATING')
         if not limits['min_voltage']<=values['voltage']<=limits['max_voltage']:faults.append('SUPPLY_OUT_OF_RANGE')
         if procedure.pwm==0 and values['rpm']!=0:faults.append('NOT_STATIONARY')
         if faults:
@@ -335,13 +335,14 @@ class AutomatedTestEngine:
                 self._transition(run,'ANALYZING')
                 step['result']=analyze(step['samples'],completed=True,source=run['source'],baselines=profile.get('baselines'),test_id=identifier,context={
                     'device_id':run['device_id'],'calibration_id':profile['calibration_id'],
-                    'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD'})
+                    'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD'},
+                    required_channels=('voltage','current','power','rpm'))
                 # Raw records remain even when analysis excludes acquisition intervals.
                 self.store.event(run['id'],{'test_id':identifier,'analysis':step['result']})
                 connection.disconnect();connection=None
             completed=True;run['progress']=100;run['outcome']='COMPLETED'
             reports=[s['result'] for s in run['steps']]
-            run['condition']='INSUFFICIENT_DATA' if any(r['health_score'] is None for r in reports) else ('WARNING' if any(r['condition']=='WARNING' for r in reports) else 'HEALTHY')
+            run['condition']='INSUFFICIENT_DATA' if any(r['condition'] not in ('HEALTHY','WARNING') for r in reports) else ('WARNING' if any(r['condition']=='WARNING' for r in reports) else 'HEALTHY')
             run['health_score']=None if any(r['health_score'] is None for r in reports) else min(r['health_score'] for r in reports)
             self._transition(run,'COMPLETED')
         except InterruptedRun as exc:

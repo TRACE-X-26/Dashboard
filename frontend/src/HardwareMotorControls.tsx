@@ -69,7 +69,7 @@ export default function HardwareMotorControls() {
   }
   const sample = run?.latest_measurement
   return <section className="panel motor-controls">
-    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands · temperature disabled</p></div><span className="mode-chip">HARDWARE</span></div>
+    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands</p></div><span className="mode-chip">HARDWARE</span></div>
     <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity, protection and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
     <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Protection limits: {status?.protection_limits_verified ? 'verified configuration' : 'PROVISIONAL / START BLOCKED'}</p>
     {supervised && <label><input type="checkbox" checked={supervisedConfirmed} disabled={active || pending} onChange={e => setSupervisedConfirmed(e.target.checked)}/> I will supervise this test and have an operator-controlled physical emergency power cutoff accessible.</label>}

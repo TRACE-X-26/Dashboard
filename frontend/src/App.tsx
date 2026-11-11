@@ -50,7 +50,6 @@ function SignalChart({ data }: { data: Measurement[] }) {
           <Tooltip contentStyle={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 10 }} />
           <Line yAxisId="electrical" type="monotone" dataKey="voltage" name="Voltage (V)" stroke="#53c7f0" dot={false} strokeWidth={2} />
           <Line yAxisId="electrical" type="monotone" dataKey="current" name="Current (A)" stroke="#ffb24c" dot={false} strokeWidth={2} />
-          <Line yAxisId="electrical" type="monotone" dataKey="temperature" name="Temperature (°C)" stroke="#f0657f" dot={false} strokeWidth={2} />
           <Line yAxisId="speed" type="monotone" dataKey="rpm" name="RPM" stroke="#9b87f5" dot={false} strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>
@@ -140,7 +139,7 @@ function MotorControl() {
         {state?.emergency_stop && <button className="reset-estop" onClick={() => send('reset_emergency_stop')}>Reset emergency stop</button>}
       </div>
       <div className="motor-side">
-        <section className="metric-grid motor-metrics"><Metric label="Output voltage" value={fmt(telemetry?.voltage, 2)} unit=" V"/><Metric label="Motor current" value={fmt(telemetry?.current, 2)} unit=" A"/><Metric label="Estimated speed" value={fmt(telemetry?.rpm, 0)} unit=" RPM"/><Metric label="Motor temperature" value={fmt(telemetry?.temperature, 1)} unit=" °C"/></section>
+        <section className="metric-grid motor-metrics"><Metric label="Output voltage" value={fmt(telemetry?.voltage, 2)} unit=" V"/><Metric label="Motor current" value={fmt(telemetry?.current, 2)} unit=" A"/><Metric label="Estimated speed" value={fmt(telemetry?.rpm, 0)} unit=" RPM"/></section>
         <div className={`panel command-ack ${accepted ? 'ack-accepted' : 'ack-rejected'}`}><div><span>{accepted ? '✓' : '!'}</span><div><h2>{accepted ? 'Command acknowledged' : 'Command rejected'}</h2><p>{acknowledgment}</p></div></div><small>Controller sequence {state?.sequence ?? 0} · {state ? new Date(state.updated_at * 1000).toLocaleTimeString() : 'waiting'}</small></div>
         <div className="panel safety-panel"><div className="panel-title"><div><h2>Active safety interlocks</h2><p>These rules will transfer to the STM32 implementation.</p></div></div><div className="safety-rule"><i className={state?.emergency_stop ? 'dot danger' : 'dot ready'}/><div><strong>Emergency stop latch</strong><span>{state?.emergency_stop ? 'Latched — output blocked' : 'Clear'}</span></div></div><div className="safety-rule"><i className="dot ready"/><div><strong>Direction-change guard</strong><span>Requires 0% PWM before reversal</span></div></div><div className="safety-rule"><i className="dot ready"/><div><strong>Enable guard</strong><span>PWM blocked while driver is disabled</span></div></div></div>
       </div>
@@ -189,7 +188,7 @@ function LiveMultimeter() {
       </div>
       <div className="panel channel-panel"><div className="panel-title"><div><h2>Available channels</h2><p>Live simulated values mapped to the Fritzing hardware.</p></div></div>{reading?.channels.map(item => <button className={selected === item.channel ? 'channel selected' : 'channel'} onClick={() => setSelected(item.channel)} key={item.channel}><div><span>{item.label}</span><small>{item.sensor}</small></div><strong>{fmt(item.value, 2)} <small>{item.unit}</small></strong></button>)}</div>
     </section>
-    <section className="sensor-map"><div><strong>INA219 #1</strong><span>Motor voltage, current, and power</span></div><div><strong>INA219 #2</strong><span>Circuit-under-test voltage and current</span></div><div><strong>Voltage probe</strong><span>External DC test point through divider</span></div><div><strong>DS18B20</strong><span>Motor case temperature</span></div></section>
+    <section className="sensor-map"><div><strong>INA219 #1</strong><span>Motor voltage, current, and power</span></div><div><strong>INA219 #2</strong><span>Circuit-under-test voltage and current</span></div><div><strong>Voltage probe</strong><span>External DC test point through divider</span></div></section>
   </>
 }
 
@@ -332,8 +331,8 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
     </section>
     <div className="progress"><span style={{ width: `${progress}%` }}/></div><p className="run-status">{status} · {progress}%</p>
     {automated && <div className="control-bar"><button className="secondary" disabled={!running} onClick={() => api.stopAutomated(automated.id).catch(error => setStatus(String(error)))}>Stop Test</button><button className="danger" disabled={!running} onClick={() => api.stopAutomated(automated.id, true).catch(error => setStatus(String(error)))}>Emergency Stop</button><button className="secondary" disabled={!automated.ended_at} onClick={() => window.open(`/api/automated/runs/${automated.id}/report`, '_blank')}>Download Report</button></div>}
-    <section className="metric-grid five">
-      <Metric label="Voltage" value={fmt(latest?.voltage, 2)} unit=" V"/><Metric label="Current" value={fmt(latest?.current, 2)} unit=" A"/><Metric label="Power" value={fmt(latest?.input_power, 1)} unit=" W"/><Metric label="Speed" value={fmt(latest?.rpm, 0)} unit=" RPM"/><Metric label="Temperature" value={fmt(latest?.temperature, 1)} unit=" °C"/>
+    <section className="metric-grid">
+      <Metric label="Voltage" value={fmt(latest?.voltage, 2)} unit=" V"/><Metric label="Current" value={fmt(latest?.current, 2)} unit=" A"/><Metric label="Power" value={fmt(latest?.input_power, 1)} unit=" W"/><Metric label="Speed" value={fmt(latest?.rpm, 0)} unit=" RPM"/>
     </section>
     <section className="split chart-split"><div className="panel"><div className="panel-title"><div><h2>Live signals</h2><p>Electrical and mechanical measurements by sample</p></div></div><SignalChart data={measurements}/></div>
       <div className="panel findings"><div className="panel-title"><div><h2>Diagnostic analysis</h2><p>{report ? `${report.health_score == null ? 'No validated health score' : `${report.health_score}% health`} · ${report.condition}` : 'Waiting for measurement data'}</p></div></div>
@@ -384,7 +383,7 @@ function Profiles({ profiles, baselines, refresh }: { profiles: Profile[]; basel
   return <><header><div><p className="eyebrow">DEVICE LIBRARY</p><h1>Motor profiles</h1><p>Define specifications used by the diagnostic engine.</p></div></header>
     <section className="split profiles"><form className="panel profile-form" onSubmit={submit}><div className="panel-title"><div><h2>Add or update profile</h2><p>All limits must be positive engineering values.</p></div></div>
       <label>Device ID<input required value={form.device_id} onChange={e => setForm({...form, device_id:e.target.value})}/></label><div className="form-grid">{([
-        ['rated_voltage','Rated voltage','V'],['rated_current','Rated current','A'],['rated_rpm','Rated speed','RPM'],['winding_resistance','Winding resistance','Ω'],['max_current','Maximum current','A'],['max_temperature','Maximum temperature','°C'],
+        ['rated_voltage','Rated voltage','V'],['rated_current','Rated current','A'],['rated_rpm','Rated speed','RPM'],['winding_resistance','Winding resistance','Ω'],['max_current','Maximum current','A'],
       ] as [keyof Profile,string,string][]).map(([key,label,unit]) => <label key={key}>{label}<div className="input-unit"><input type="number" step="any" min="0.001" required value={form[key]} onChange={e => setForm({...form,[key]:Number(e.target.value)})}/><span>{unit}</span></div></label>)}</div><button className="primary" type="submit">Save profile</button>{message && <p className="form-message">{message}</p>}</form>
       <div className="panel"><div className="panel-title"><div><h2>Saved devices</h2><p>{profiles.length} configured profile{profiles.length === 1 ? '' : 's'}</p></div></div>{profiles.map(p => { const baseline = baselines.find(b => b.device_id === p.device_id); return <div className="profile-row" key={p.device_id}><div><strong>{p.device_id}</strong><small>{p.rated_voltage} V · {p.rated_current} A · {p.rated_rpm} RPM</small></div><span>{baseline ? `Baseline: ${baseline.sample_count} samples` : 'No baseline'}</span></div> })}</div></section>
   </>

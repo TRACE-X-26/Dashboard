@@ -25,9 +25,20 @@ class HealthAnalysisTests(unittest.TestCase):
         self.assertEqual(result['condition'],'WARNING');self.assertEqual(result['health_score'],80)
     def test_repeated_channel_acquisitions_do_not_inflate_evidence(self):
         samples=self.samples()
-        for sample in samples:sample['raw']['measurements']['temperature']['timestamp_ms']=0
+        for sample in samples:sample['raw']['measurements']['current']['timestamp_ms']=0
         result=analyze(samples,completed=True,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')
         self.assertIsNone(result['health_score'])
     def test_incomplete_never_has_a_health_score(self):
         result=analyze(self.samples(),completed=False,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')
         self.assertEqual(result['condition'],'TEST_INCOMPLETE');self.assertIsNone(result['health_score'])
+
+    def test_temperature_never_affects_health(self):
+        samples=self.samples()
+        for sample in samples:
+            sample['values']['temperature']=None
+        healthy=analyze(samples,completed=True,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')
+        self.assertEqual(healthy['condition'],'HEALTHY')
+        self.assertNotIn('temperature', healthy['features'])
+        for sample in samples:
+            sample['values']['temperature']=999
+        self.assertEqual(analyze(samples,completed=True,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')['condition'],'HEALTHY')

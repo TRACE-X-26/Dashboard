@@ -54,7 +54,7 @@ export default function LiveSensors() {
     <INA219Readings branches={state?.ina219} fresh={!!online && !!state?.hardware_connected && !state?.stale}/>
     <section className="panel"><h2>Connection</h2>
       <p>{!online ? 'Dashboard stream disconnected' : !state?.enabled ? 'Pi serial monitoring is not configured' : !state.connected ? 'Serial disconnected' : state.stale ? 'Serial open; telemetry missing or stale' : 'Receiving unverified hardware telemetry'}</p>
-      <p>Direction: {channel('direction') ?? 'Unavailable'} · Housing temperature: {show(channel('temperature'), 1)} °C</p>
+      <p>Direction: {channel('direction') ?? 'Unavailable'}</p>
       <p>Recorded motor event state: {online ? state?.recorded_motor_phase : 'Unknown'} · Received frames: {state?.sequence ?? 0}</p>
       <p>Protocol: {state?.motor_format ?? 'UNKNOWN'} · Complete motor cycles: {state?.complete_motor_frames ?? 0}</p>
       <p>Latest status observations · Encoder: {status('encoder_status', sample?.encoder_status)} · INA219: {status('ina219_status', sample?.ina219_status)}</p>
@@ -65,7 +65,7 @@ export default function LiveSensors() {
       <p>Branch voltage/current/power are measured before the driver. Plain-text cycles are grouped within three seconds using unique fields; this is receive-time association, not proof of simultaneous acquisition. Sensor calibration and the encoder direction convention remain unverified.</p>
       <h2>Individual channel observations</h2><p>Partial readings below are separate from the complete-cycle tiles.</p>
       <div className="table-wrap"><table><thead><tr><th>Channel</th><th>Last reported value</th><th>Quality</th><th>Age (s)</th></tr></thead><tbody>
-        {Object.entries(state?.channels ?? {}).map(([key, c]) => <tr key={key}><td>{key}</td><td>{c.value} {({ voltage: 'V', current: 'A', rpm: 'RPM', temperature: '°C', recorded_power: 'W', input_power: 'W' } as Record<string, string>)[key] ?? ''}</td><td>{online ? c.quality : 'DISCONNECTED'}</td><td>{online ? c.age_seconds.toFixed(2) : 'Unknown'}</td></tr>)}
+        {Object.entries(state?.channels ?? {}).filter(([key]) => key !== 'temperature').map(([key, c]) => <tr key={key}><td>{key}</td><td>{c.value} {({ voltage: 'V', current: 'A', rpm: 'RPM', temperature: '°C', recorded_power: 'W', input_power: 'W' } as Record<string, string>)[key] ?? ''}</td><td>{online ? c.quality : 'DISCONNECTED'}</td><td>{online ? c.age_seconds.toFixed(2) : 'Unknown'}</td></tr>)}
       </tbody></table></div>
       {!Object.keys(state?.channels ?? {}).length && <p>No sensor values received.</p>}
       <p>{state?.warnings.join(' · ')}</p>
