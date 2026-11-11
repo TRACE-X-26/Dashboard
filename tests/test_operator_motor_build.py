@@ -49,4 +49,5 @@ class OperatorMotorBuildTests(unittest.TestCase):
             path.write_text(json.dumps(data))
             loaded = load_hardware_profile(path)
             self.assertEqual(loaded['operating_mode'], 'SUPERVISED_TEST')
-            self.assertEqual(loaded['limits']['max_current'], 1.5)
+            self.assertFalse(loaded['electrical_limits_enabled'])
+            self.assertNotIn('limits',loaded)

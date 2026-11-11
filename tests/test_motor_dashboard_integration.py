@@ -25,25 +25,23 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
                      'power_feedback_installed','power_feedback_wiring_verified'):
             profile[name]=True # Synthetic test input, never a real approval.
         profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
-        profile['limits'].update(min_voltage=9,max_voltage=15,max_current=1,max_temperature=None)
         return profile
     def write_profile(self,profile):
         p=Path(self.temp.name)/'profile.json';p.write_text(json.dumps(profile));return p
-    def test_disabled_temperature_needs_no_temperature_cutoff_but_current_is_essential(self):
+    def test_temperature_remains_retired_and_electrical_cutoffs_are_not_required(self):
         profile=self.profile()
-        self.assertFalse(load_hardware_profile(self.write_profile(profile))['temperature_enabled'])
-        profile['limits']['max_current']=None
-        with self.assertRaisesRegex(RunRejected,'max_current'):
-            load_hardware_profile(self.write_profile(profile))
-        profile['limits']['max_current']=1;profile['temperature_enabled']=True
+        loaded=load_hardware_profile(self.write_profile(profile))
+        self.assertFalse(loaded['temperature_enabled']);self.assertFalse(loaded['electrical_limits_enabled'])
+        self.assertNotIn('limits',loaded)
+        profile['temperature_enabled']=True
         with self.assertRaisesRegex(RunRejected,'Temperature has been retired'):
             load_hardware_profile(self.write_profile(profile))
     def test_template_does_not_claim_assumed_operating_current_is_a_protection_limit(self):
         p=ROOT/'deploy/pi/hardware-profile.example.json'
         profile=json.loads(p.read_text())
         self.assertEqual(profile['motor']['operating_current_reference'],.5)
-        self.assertEqual(profile['limits']['max_current'],1.5)
-        self.assertTrue(profile['protection_limits_verified'])
+        self.assertNotIn('limits',profile)
+        self.assertFalse(profile['electrical_limits_enabled'])
         self.assertFalse(profile['encoder']['calibrated'])
         with self.assertRaises(RunRejected):load_hardware_profile(p)
     def test_provisional_rpm_and_disabled_temperature_are_usable_without_health_claim(self):
@@ -63,7 +61,7 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
             return result
         connection.execute=read
         run=dict(id='fixture',created_at='fixture',source='SIMULATION',state='PRECHECK',mode='simulation',
-                 commissioning=self.profile(),steps=[])
+                 commissioning={**self.profile(),'limits':{'min_voltage':9.,'max_voltage':15.,'max_current':10.}},steps=[])
         self.engine.store.create(run)
         step={'samples':[],'device_session_id':'fixture'}
         self.engine._measure(connection,run,REGISTRY['pwm_10'],step,None)

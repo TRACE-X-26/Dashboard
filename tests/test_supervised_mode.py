@@ -46,8 +46,8 @@ class SupervisedProtocolTests(unittest.TestCase):
     def test_capabilities_label_operator_verified_limits_and_no_feedback(self):
         cap=self.exchange([self.frame('GET_CAPABILITIES',1)],'supervised')[0].payload['result']
         self.assertEqual(cap['operating_mode'],'SUPERVISED_TEST')
-        self.assertFalse(cap['power_feedback_installed']);self.assertTrue(cap['protection_limits_verified'])
-        self.assertEqual((cap['min_voltage_mv'],cap['max_voltage_mv'],cap['max_current_ma']),(11000,13000,1500))
+        self.assertFalse(cap['power_feedback_installed']);self.assertFalse(cap['electrical_limits_enabled'])
+        self.assertNotIn('min_voltage_mv',cap);self.assertNotIn('max_current_ma',cap)
 
 class PowerFeedbackTests(unittest.TestCase):
     def test_normal_and_supervised_pin_mapping_shutdown_and_unverified_gates(self):
@@ -112,9 +112,8 @@ class SupervisedEngineTests(unittest.TestCase):
             def status(self):return {**super().status(),'operating_mode':self.fixture_mode,
                 'power_feedback_installed':False,'power_feedback_state':'NOT_INSTALLED'}
             def emit(self,kind,payload,stamp=None):
-                if kind=='capabilities':payload['result'].update(firmware_version='0.5.0-supervised-motor',
-                    operating_mode=self.fixture_mode,power_feedback_installed=False,protection_limits_verified=True,
-                    min_voltage_mv=11000,max_voltage_mv=13000,max_current_ma=1500,temperature_enabled=False)
+                if kind=='capabilities':payload['result'].update(firmware_version='0.5.2-electrical-telemetry',
+                    operating_mode=self.fixture_mode,power_feedback_installed=False,electrical_limits_enabled=False,temperature_enabled=False)
                 if kind=='measurement':
                     payload['result']['measurements']['temperature'].update(value=None,valid=False)
                     payload['result']['temperature_calibrated']=False

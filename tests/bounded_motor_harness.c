@@ -6,7 +6,12 @@
 static uint32_t now;
 static unsigned starts,stops;
 static int sensors_ok=1;
-static int ready(void *ctx) { (void)ctx; return sensors_ok; }
+static ADS_Test *motor_branch, *circuit_branch;
+static int ready(void *ctx) {
+  if(ctx==motor_branch && circuit_branch && (circuit_branch->armed || circuit_branch->running)) return 0;
+  if(ctx==circuit_branch && motor_branch && (motor_branch->armed || motor_branch->running)) return 0;
+  return sensors_ok;
+}
 static int start(uint32_t p,uint32_t d,void *ctx)
 { (void)ctx; assert((p==10 || p==25 || p==50 || p==75 || p==100) && d<=30000); starts++; return 1; }
 static void stop(void *ctx) { (void)ctx; stops++; }
@@ -115,11 +120,17 @@ static void info(ADS_MeasurementInfo *out,void *ctx) { (void)ctx; *out=data.info
 int main(int argc,char **argv)
 {
   if(argc==1) { scenarios(); return 0; }
-  ADS_Test t; ADS_Protocol p;
+  ADS_Test t,circuit; ADS_Protocol p;
   ADS_Test_Init(&t,10,1000,strcmp(argv[1],"disabled")!=0,ready,start,stop,NULL);
   t.supervised_required=!strcmp(argv[1],"supervised");
   ADS_Protocol_Init(&p,transmit,tick,NULL); ADS_Protocol_SetMotorTest(&p,&t);
   if(!strcmp(argv[1],"crc")) p.require_crc=1;
+  if(!strcmp(argv[1],"circuit") || !strcmp(argv[1],"circuit-disabled")) {
+    motor_branch=&t; circuit_branch=&circuit; t.context=&t;
+    ADS_Test_Init(&circuit,100,30000,strcmp(argv[1],"circuit-disabled")!=0,ready,start,stop,&circuit);
+    circuit.supervised_required=1;
+    ADS_Protocol_SetCircuitTest(&p,&circuit);
+  }
   ADS_Acquisition_Init(&data);
   ADS_Acquisition_Electrical(&data,(3000U<<3)|2,0,100,1,0,0,1);
   uint8_t zero[9]; zero_scratch(zero); ADS_Acquisition_Temperature(&data,zero,1,0,0,1);
@@ -127,7 +138,8 @@ int main(int argc,char **argv)
   ADS_Protocol_SetHardwareCallbacks(&p,acquire,NULL);
   ADS_Protocol_SetMeasurementInfo(&p,info);
   int ch; while((ch=getchar())!=EOF) {
-    if(ch=='@') { now+=1000; ADS_Protocol_Poll(&p); }
+    if(ch=='!') { sensors_ok=0; ADS_Protocol_Poll(&p); }
+    else if(ch=='@') { now+=1000; ADS_Protocol_Poll(&p); }
     else ADS_Protocol_ProcessByte(&p,(uint8_t)ch);
   }
   return 0;

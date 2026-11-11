@@ -57,26 +57,28 @@ class BenchFixture(STM32Simulator):
         payload = copy.deepcopy(payload)
         result = payload.get('result', {})
         if kind == 'capabilities':
-            result.update(firmware_version='0.5.0-supervised-motor', operating_mode='SUPERVISED_TEST',
-                          power_feedback_installed=False, protection_limits_verified=True,
-                          min_voltage_mv=11000, max_voltage_mv=13000, max_current_ma=1500,
+            result.update(firmware_version='0.5.2-electrical-telemetry', operating_mode='SUPERVISED_TEST',
+                          power_feedback_installed=False, electrical_limits_enabled=False,
                           temperature_enabled=False)
             if self.fault == 'disabled':
                 result.update(hardware_control=False, hardware_block_reason='CONTROL_DISABLED')
-            if self.fault == 'limit_mismatch':
-                result['max_current_ma'] = 2500
+            if self.fault == 'policy_mismatch':
+                result['electrical_limits_enabled'] = True
         if kind == 'measurement':
             result['measurements']['temperature'].update(valid=False, value=None)
             result['temperature_calibrated'] = False
+            if self.fault == 'valid_zero':
+                for key in ('voltage','current','power'):
+                    result['measurements'][key]['value']=0.
             if self.state == 'RUNNING':
                 if self.fault == 'stale':
                     result['measurements']['current']['timestamp_ms'] = (self.tick() - 2000) & 0xffffffff
                 if self.fault == 'overcurrent':
                     result['measurements']['current']['value'] = 1.5
                 if self.fault == 'undervoltage':
-                    result['measurements']['voltage']['value'] = 10.9
+                    result['measurements']['voltage']['value'] = 9.9
                 if self.fault == 'overvoltage':
-                    result['measurements']['voltage']['value'] = 13.1
+                    result['measurements']['voltage']['value'] = 14.1
         if kind == 'ack' and result.get('state') == 'RUNNING' and self.fault == 'bad_start_ack':
             result['applied_pwm_percent'] = 25
         if kind == 'ack' and result.get('state') == 'RUNNING' and self.fault == 'wrong_reply_to':
@@ -168,8 +170,7 @@ class HardwareRuntimeTests(unittest.TestCase):
 
     def test_rejected_start_stale_current_voltage_heartbeat_and_stop_failures(self):
         cases = {'rejected_start': 'INTERLOCK_OR_SENSOR_FAULT', 'stale': 'invalid or stale',
-                 'overcurrent': 'OVERCURRENT', 'undervoltage': 'SUPPLY_OUT_OF_RANGE',
-                 'overvoltage': 'SUPPLY_OUT_OF_RANGE', 'heartbeat_loss': 'lockout',
+                 'heartbeat_loss': 'lockout',
                  'stop_failure': 'Stopped state', 'bad_start_ack': 'acknowledgment',
                  'missing_start_event': 'start event missing'}
         for fault, reason in cases.items():
@@ -190,22 +191,30 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertEqual(self.commands().count('START_TEST'), 1)
         self.assertTrue(run['stop_confirmed'])
 
-    def test_limit_mismatch_rejects_before_arm_and_estimated_profile_is_blocked(self):
-        engine = self.engine('limit_mismatch')
+    def test_electrical_policy_mismatch_rejects_before_arm(self):
+        engine = self.engine('policy_mismatch')
         engine.start(self.request())
         run = self.finish(engine)
-        self.assertIn('protection limit mismatch', run['reason'])
+        self.assertIn('electrical-limit policy mismatch', run['reason'])
         self.assertNotIn('ARM_TEST', self.commands())
-        self.profile['protection_limits_verified'] = False
+        self.profile['electrical_limits_enabled'] = True
         self.path.write_text(json.dumps(self.profile))
-        with self.assertRaisesRegex(RunRejected, 'protection_limits_verified'):
+        with self.assertRaisesRegex(RunRejected, 'electrical_limits_enabled=false'):
             engine.start(self.request())
+
+    def test_previous_current_and_voltage_trip_values_do_not_stop_hardware(self):
+        for fault in ('overcurrent','undervoltage','overvoltage','valid_zero'):
+            with self.subTest(fault=fault):
+                engine=self.engine(fault)
+                self.assertTrue(engine.preflight()['ready'])
+                engine.start(self.request());run=self.finish(engine)
+                self.assertEqual(run['state'],'COMPLETED',run.get('reason'))
+                self.assertTrue(run['stop_confirmed'])
 
     def test_contract_rejects_every_mismatched_protection_mode_and_feedback(self):
         report = self.engine().preflight()
         caps, status = report['capabilities'], report['status']
-        changes = [('protection_limits_verified', False), ('min_voltage_mv', 10000),
-                   ('max_voltage_mv', 14000), ('max_current_ma', 2500),
+        changes = [('electrical_limits_enabled', True),
                    ('fixed_pwm_percent', 100), ('max_duration_ms', 31000),
                    ('operating_mode', 'NORMAL'), ('power_feedback_installed', True),
                    ('heartbeat_timeout_ms', 5000), ('fixed_direction', 'REVERSE'),
@@ -227,6 +236,24 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertIn('runtime disabled', report['reason'])
         self.assertFalse(any(p['available'] for p in engine.available('hardware')))
         self.assertTrue(set(self.commands()) <= {'GET_CAPABILITIES', 'GET_STATUS', 'READ_MEASUREMENTS'})
+
+    def test_any_valid_fresh_voltage_current_including_zero_are_telemetry_only(self):
+        raw = dict(sample_sequence=1, electrical_sequence=1, voltage_current_calibrated=True,
+                   electrical_started_ms=100, electrical_completed_ms=100,
+                   encoder_started_ms=100, encoder_completed_ms=100,
+                   measurements={name: dict(value=value, valid=True, unit=unit, timestamp_ms=100)
+                                 for name, value, unit in [('voltage', 12., 'V'), ('current', 0., 'A'),
+                                                           ('power', 0., 'W'), ('rpm', 0., 'rpm'),
+                                                           ('temperature', 0., 'degC')]})
+        raw['measurements']['temperature'].update(value=None, valid=False)
+        for voltage,current in [(0.,0.),(.036,0.),(9.999,1.5),(14.001,-2.5),(24.,10.)]:
+            raw['measurements']['voltage']['value']=voltage
+            raw['measurements']['current']['value']=current
+            raw['measurements']['power']['value']=voltage*current
+            HardwareRuntime.validate_sensors(self.profile,raw,100)
+        raw['measurements']['current'].update(valid=False,value=None)
+        with self.assertRaisesRegex(RunRejected,'invalid or stale'):
+            HardwareRuntime.validate_sensors(self.profile,raw,100)
 
     def test_guided_procedure_approval_survives_runtime_preflight_gating(self):
         engine = self.engine()

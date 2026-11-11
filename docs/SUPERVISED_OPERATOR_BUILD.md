@@ -1,3 +1,5 @@
+> Current behavior: motor voltage/current cutoffs were removed at the operator's request. Use [BRANCH_POWER_UPDATE.md](BRANCH_POWER_UPDATE.md) for firmware 0.5.2, matching Pi profile migration, flashing and deployment. Older threshold statements below describe earlier versions.
+
 # Supervised motor-enabled build — November 11, 2026
 
 The operator explicitly confirmed relay/reset behavior, physical cutoff,
@@ -13,7 +15,7 @@ calibration acceptance. `ADS_BOARD_ACCEPTED` is true for this profile. Generic
 Makefile defaults and the supervised example remain output-disabled.
 
 Mode is SUPERVISED_TEST; PC8 feedback is not required or claimed installed.
-Current cutoff is 1.5 A, supply window 11–13 V (operator-confirmed).
+Current cutoff is 1.5 A, supply window 10–14 V (operator-confirmed).
 Fixed PWM is 50%, maximum duration 30 seconds. Boot remains stopped. The
 enabled build still requires per-run operator confirmation, valid motor sensor
 readings, explicit ARM/START, and the existing deadline/heartbeat protections.
@@ -83,7 +85,7 @@ criterion for this enabled image.
 
 ## First dashboard run
 
-The motor INA219 must read 11–13 V while the relay is off. If placement
+The motor INA219 must read 10–14 V while the relay is off. If placement
 downstream of the relay gives zero voltage, precheck still rejects starts;
 this build does not energize the relay to bypass that check.
 

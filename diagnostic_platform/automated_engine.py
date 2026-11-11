@@ -2,7 +2,6 @@
 from __future__ import annotations
 import copy
 import json
-import math
 import os
 import threading
 import time
@@ -31,7 +30,7 @@ def load_hardware_profile(path):
     mode=profile.get('operating_mode','NORMAL')
     if mode not in ('NORMAL','SUPERVISED_TEST'):raise RunRejected('Unknown motor operating mode')
     required=('wiring_verified','relay_verified','kill_switch_verified',
-              'communication_stop_verified','calibration_verified','operator_enable','protection_limits_verified')
+              'communication_stop_verified','calibration_verified','operator_enable')
     if mode=='NORMAL':required+=('interlock_verified','power_feedback_installed','power_feedback_wiring_verified')
     else:required+=('supervised_testing_approved',)
     if type(profile.get('power_feedback_installed',False)) is not bool:
@@ -48,14 +47,11 @@ def load_hardware_profile(path):
         raise RunRejected('Approved fixed duty required')
     if type(profile.get('max_duration_ms')) is not int or not 1<=profile['max_duration_ms']<=30000:
         raise RunRejected('Approved duration required')
-    limits=profile.get('limits',{})
     if profile.get('temperature_enabled', False) is not False:
         raise RunRejected('Temperature has been retired; set temperature_enabled to false')
     profile['temperature_enabled']=False
-    for k in ('max_current','min_voltage','max_voltage'):
-        v=limits.get(k)
-        if type(v) not in (int,float) or not math.isfinite(v) or v<=0:raise RunRejected('Validated positive physical limit required: '+k)
-    if limits['min_voltage']>=limits['max_voltage']:raise RunRejected('Invalid voltage limits')
+    if profile.get('electrical_limits_enabled') is not False:
+        raise RunRejected('Explicit electrical_limits_enabled=false profile required for this firmware')
     return profile
 
 class AutomatedTestEngine:
@@ -74,6 +70,8 @@ class AutomatedTestEngine:
             read_timeout=serial_read_timeout,command_timeout=serial_command_timeout)
         self._mutex=threading.Lock();self._data_lock=threading.RLock();self._cancel=threading.Event()
         self._emergency=threading.Event();self._thread=None;self.current=None
+        from .circuit_power import CircuitPowerService
+        self.circuit_power=CircuitPowerService(self)
     def recover(self):self.store.recover()
     def available(self,mode):
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
@@ -94,7 +92,10 @@ class AutomatedTestEngine:
     def start(self,request):
         mode=request.get('mode','simulation')
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
-        if mode=='hardware':self.hardware_runtime.require_permission()
+        if mode=='hardware':
+            self.hardware_runtime.require_permission()
+            if self.circuit_power.selected_branch == 'CIRCUIT':
+                raise RunRejected('Select Motor before starting a motor test')
         profile=load_hardware_profile(self.hardware_profile_path) if mode=='hardware' else {
             'limits':{'max_current':10.,'min_voltage':9.,'max_voltage':15.},
             'temperature_enabled':False,'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
@@ -127,6 +128,8 @@ class AutomatedTestEngine:
             raise RunRejected('This observation procedure needs at least five seconds, including a three-second settling window')
         if not self._mutex.acquire(blocking=False):raise RunRejected('Another sequence is active')
         try:
+            if mode=='hardware' and self.circuit_power.selected_branch == 'CIRCUIT':
+                raise RunRejected('Select Motor before starting a motor test')
             self._cancel.clear();self._emergency.clear()
             run=dict(id=str(uuid4()),state='IDLE',mode=mode,source='SIMULATION' if mode=='simulation' else 'stm32_serial',
                 device_id=request.get('device_id','MOTOR-001'),created_at=utcnow(),ended_at=None,
@@ -147,9 +150,11 @@ class AutomatedTestEngine:
     def stop(self,emergency=False):
         if emergency:self._emergency.set()
         self._cancel.set()
+        self.circuit_power.stop()
         return {'accepted':True,'state':'STOP_REQUESTED','physical_stop_confirmed':False}
     def close(self):
         self.stop()
+        self.circuit_power.close()
         if self._thread:self._thread.join(timeout=4)
         if self._thread and self._thread.is_alive(): raise RuntimeError('Test owner failed to shut down')
         self._owner_file.close()
@@ -289,10 +294,11 @@ class AutomatedTestEngine:
         if self.publish:self.publish(raw,run['source'])
         if 'INVALID_SENSOR_DATA' in quality or 'CALIBRATION_UNVERIFIED' in quality or any(q.startswith('STALE') for q in quality):
             raise RunRejected('Sensor acquisition invalid or stale; motor condition unknown')
-        limits=run['commissioning']['limits']
         faults=[]
-        if abs(values['current'])>=limits['max_current']:faults.append('OVERCURRENT')
-        if not limits['min_voltage']<=values['voltage']<=limits['max_voltage']:faults.append('SUPPLY_OUT_OF_RANGE')
+        if run['mode']=='simulation':
+            limits=run['commissioning']['limits']
+            if abs(values['current'])>=limits['max_current']:faults.append('OVERCURRENT')
+            if not limits['min_voltage']<=values['voltage']<=limits['max_voltage']:faults.append('SUPPLY_OUT_OF_RANGE')
         if procedure.pwm==0 and values['rpm']!=0:faults.append('NOT_STATIONARY')
         if faults:
             run['confirmed_limit_faults']=faults
@@ -390,7 +396,7 @@ class AutomatedTestEngine:
                     'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD',
                     'load_id':run['configuration']['load_id'],'condition':run['configuration']['condition'],
                     'attached_mass_g':run['configuration']['attached_mass_g'],
-                    'supply_range':[profile['limits']['min_voltage'],profile['limits']['max_voltage']],
+                    'supply_range':([profile['limits']['min_voltage'],profile['limits']['max_voltage']] if run['mode']=='simulation' else None),
                     'duration_ms':run['configuration']['duration_ms'],'firmware_version':profile.get('firmware_version'),
                     'sensor_configuration':'INA219-MOTOR-0x40-and-encoder',
                     'procedure_version':'settled-fixed-duty-v1' if procedure.requires_setup else 'fixed-duty-v1'},

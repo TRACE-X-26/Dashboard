@@ -9,9 +9,10 @@ import HistoricalRecordings from './HistoricalRecordings'
 import LiveSensors from './LiveSensors'
 import PhysicalCircuit from './PhysicalCircuit'
 import HardwareMotorControls from './HardwareMotorControls'
+import TestStation from './TestStation'
 import type { AutomatedRun, RegisteredTest, Baseline, CircuitProfile, CircuitReport, Finding, Measurement, MeterReading, MotorStatus, Profile, Report, Session, SessionDetail } from './types'
 
-type Page = 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles' | 'recordings' | 'sensors'
+type Page = 'station' | 'dashboard' | 'control' | 'meter' | 'circuit' | 'test' | 'history' | 'profiles' | 'recordings' | 'sensors'
 
 const NAV: { key: Page; label: string; icon: string }[] = [
   { key: 'sensors', label: 'STM32 sensors', icon: '⌁' },
@@ -401,7 +402,8 @@ function Profiles({ profiles, baselines, refresh }: { profiles: Profile[]; basel
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>('station')
+  const [advanced, setAdvanced] = useState(false)
   const [circuitHardware, setCircuitHardware] = useState(false)
   const [testHardware, setTestHardware] = useState(false)
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -415,6 +417,7 @@ export default function App() {
   }, [])
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer) }, [refresh])
   const content = useMemo(() => {
+    if (page === 'station') return <TestStation/>
     if (page === 'sensors') return <LiveSensors/>
     if (page === 'recordings') return <HistoricalRecordings/>
     if (page === 'control') return <MotorControl/>
@@ -425,5 +428,5 @@ export default function App() {
     if (page === 'profiles') return <Profiles profiles={profiles} baselines={baselines} refresh={refresh}/>
     return <Dashboard sessions={sessions} refresh={refresh} readiness={{ online, ...receiver }}/>
   }, [page, profiles, scenarios, sessions, baselines, refresh, online, receiver, circuitHardware, testHardware])
-  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav>{NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); if (item.key !== 'test') setTestHardware(false); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor controls: separate hardware / simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'control' ? 'MOTOR BENCH · HARDWARE / SIMULATION' : page === 'test' && testHardware ? 'HARDWARE TEST · COMMISSIONING REQUIRED' : page === 'circuit' && circuitHardware ? 'HARDWARE CAPTURE · UNVERIFIED' : page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · {page === 'control' || (page === 'test' && testHardware) ? 'Physical commands require backend prechecks and authorization' : 'Simulation controls / separate hardware monitoring'}</span></div>{content}</main></div>
+  return <div className="app"><aside><div className="brand"><div className="brand-mark">A</div><div><strong>TRACE-X</strong><span>Diagnostic station</span></div></div><nav><button className={page === 'station' ? 'active' : ''} onClick={() => setPage('station')}>Test station</button><button aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>Advanced tools {advanced ? '−' : '+'}</button>{advanced && NAV.map(item => <button className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} aria-label={item.label} onClick={() => { setPage(item.key); if (item.key !== 'test') setTestHardware(false); window.scrollTo(0, 0) }} key={item.key}><span>{item.icon}</span>{item.label}</button>)}</nav><div className="connection"><i className={online ? 'dot ready' : 'dot danger'}/><div><strong>{online ? 'API connected' : 'API offline'}</strong><span>Motor controls: separate hardware / simulation</span></div></div></aside><main><div className="source-banner" role="status"><strong>{page === 'station' ? 'TEST STATION · EXPLICIT POWER CONTROL' : page === 'control' ? 'MOTOR BENCH · HARDWARE / SIMULATION' : page === 'test' && testHardware ? 'HARDWARE TEST · COMMISSIONING REQUIRED' : page === 'circuit' && circuitHardware ? 'HARDWARE CAPTURE · UNVERIFIED' : page === 'sensors' ? 'HARDWARE MONITOR · UNVERIFIED' : page === 'recordings' ? 'RECORDED DATA' : 'SIMULATION'}</strong><span>{online ? 'Backend connected' : 'Backend unavailable'} · {page === 'station' || page === 'control' || (page === 'test' && testHardware) ? 'Physical commands require backend prechecks and authorization' : 'Simulation controls / separate hardware monitoring'}</span></div>{content}</main></div>
 }

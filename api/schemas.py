@@ -107,3 +107,13 @@ class AutomatedRunPayload(BaseModel):
     scenario: Literal['healthy','overloaded','undervoltage','overheating','stalled','sensor_failure','communication_loss'] = 'healthy'
     operator_authorized: bool = False
     supervised_confirmed: bool = Field(default=False,strict=True)
+
+
+class BranchSelectionPayload(BaseModel):
+    branch: Literal['MOTOR', 'CIRCUIT']
+
+
+class CircuitPowerPayload(BaseModel):
+    on: bool = Field(strict=True)
+    duration_ms: int = Field(default=30000, ge=100, le=30000, strict=True)
+    supervised_confirmed: bool = Field(default=False, strict=True)

@@ -31,8 +31,7 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port,uint16_t pin,GPIO_PinState level)
 int main(void)
 {
   ADS_Motor_Init(); assert(!relay_on && !TIM2->CCR3);
-  if(!ADS_PROTECTION_LIMITS_VERIFIED ||
-     (ADS_MOTOR_OPERATING_MODE==ADS_MODE_SUPERVISED_TEST && !ADS_SUPERVISED_TESTING_APPROVED)) {
+  if((ADS_MOTOR_OPERATING_MODE==ADS_MODE_SUPERVISED_TEST && !ADS_SUPERVISED_TESTING_APPROVED)) {
     assert(!ADS_Motor_OutputEnabled());assert(!ADS_Motor_Rearm());
     assert(!ADS_Motor_StartPWM(ADS_BENCH_PWM_PERCENT,1000));return 0;
   }

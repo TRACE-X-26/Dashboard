@@ -30,10 +30,13 @@ class RunStore:
             CREATE TABLE IF NOT EXISTS simulated_circuit_runs(
               id TEXT PRIMARY KEY, captured INTEGER NOT NULL DEFAULT 0, report_json TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS automated_ownership(id INTEGER PRIMARY KEY CHECK(id=1),run_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS branch_power_sessions(id TEXT PRIMARY KEY, record_json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS branch_power_samples(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES branch_power_sessions(id), received_at TEXT NOT NULL, record_json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS automated_samples_run ON automated_samples(run_id,id);
             ''')
             db.execute('INSERT OR IGNORE INTO schema_migrations VALUES(1,?)',(utcnow(),))
             db.execute('INSERT OR IGNORE INTO schema_migrations VALUES(2,?)',(utcnow(),))
+            db.execute('INSERT OR IGNORE INTO schema_migrations VALUES(3,?)',(utcnow(),))
     @contextmanager
     def connect(self):
         db=sqlite3.connect(self.path,timeout=5)
@@ -51,6 +54,12 @@ class RunStore:
                         ended_at=utcnow(),reason='Backend interrupted; physical stop not confirmed',health_score=None,stop_confirmed=False)
                     db.execute('UPDATE automated_runs SET state=?,updated_at=?,record_json=? WHERE id=?',
                                (item['state'],utcnow(),json.dumps(item),row['id']))
+            for row in db.execute('SELECT * FROM branch_power_sessions').fetchall():
+                item=json.loads(row['record_json'])
+                if not item.get('ended_at'):
+                    item.update(state='FAILED',power_on=None,stop_confirmed=False,ended_at=utcnow(),
+                                reason='Backend interrupted; physical stop unconfirmed')
+                    db.execute('UPDATE branch_power_sessions SET record_json=? WHERE id=?',(json.dumps(item),row['id']))
             db.execute('DELETE FROM automated_ownership')
     def create(self,run):
         with self.connect() as db:

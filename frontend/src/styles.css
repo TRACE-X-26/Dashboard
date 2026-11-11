@@ -94,3 +94,10 @@ summary { cursor:pointer; min-height:44px; padding:12px 0; color:var(--cyan); }
 .circuit4-diagram { margin:12px 0; padding:10px; background:#08141d; border-radius:10px; }
 .circuit4-diagram svg { display:block; width:100%; height:auto; }
 .circuit4-diagnostic { border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:16px; }
+
+.branch-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.branch-card { min-height: 110px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 10px; padding: 20px; border: 2px solid var(--line); background: var(--panel); color: var(--text); border-radius: 14px; text-align: left; }
+.branch-card strong { font-size: 24px; }
+.branch-card span { color: var(--muted); }
+.branch-card.selected { border-color: #53c7f0; }
+@media (max-width: 600px) { .branch-choice { grid-template-columns: 1fr; } }

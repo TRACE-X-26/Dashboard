@@ -93,6 +93,9 @@ class STM32SerialConnection:
     """
 
     CONTROL_COMMANDS = {
+        CommandName.ARM_CIRCUIT,
+        CommandName.START_CIRCUIT,
+        CommandName.STOP_CIRCUIT,
         CommandName.ARM_TEST,
         CommandName.CLEAR_FAULTS,
         CommandName.EMERGENCY_STOP,

@@ -35,6 +35,8 @@ from diagnostic_platform.workflow import MotorTestSession, TestState, TestStoppe
 
 from .schemas import (
     CircuitRunPayload,
+    BranchSelectionPayload,
+    CircuitPowerPayload,
     AutomatedRunPayload,
     MotorCommandPayload,
     ProfilePayload,
@@ -616,6 +618,40 @@ def circuit_hardware_capabilities():
             'automatic_excitation':False,'range_selection':'UNAVAILABLE',
             'supported_workflow':'Read-only operator-guided tagged engineering-value capture'}
 
+@app.get('/api/station/status')
+def station_status():
+    engine=test_engine()
+    return {'selected_branch':engine.circuit_power.selected_branch,
+            'circuit':engine.circuit_power.snapshot(), 'motor':engine.snapshot(),
+            'hardware_runtime_enabled':engine.hardware_runtime.enabled}
+
+@app.post('/api/station/select')
+def station_select(payload: BranchSelectionPayload):
+    try:return test_engine().circuit_power.select(payload.branch)
+    except RunRejected as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
+
+@app.post('/api/station/circuit/power')
+def station_circuit_power(payload: CircuitPowerPayload):
+    service=test_engine().circuit_power
+    if not payload.on:return service.stop()
+    try:return service.start(payload.duration_ms,payload.supervised_confirmed)
+    except (ValueError,OSError,RuntimeError) as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
+
+@app.get('/api/station/circuit/{session_id}/csv')
+def station_circuit_csv(session_id: str):
+    import io,json
+    with test_engine().store.connect() as db:
+        if not db.execute('SELECT 1 FROM branch_power_sessions WHERE id=?',(session_id,)).fetchone():
+            raise HTTPException(status_code=404,detail='Circuit power session not found')
+        rows=db.execute('SELECT * FROM branch_power_samples WHERE session_id=? ORDER BY id',(session_id,)).fetchall()
+    output=io.StringIO();writer=csv.writer(output)
+    writer.writerow(['session_id','received_at','source','branch','stm32_timestamp_ms','voltage_V','current_A','power_W','calibrated'])
+    for row in rows:
+        b=json.loads(row['record_json'])
+        writer.writerow([session_id,row['received_at'],'stm32_serial','CIRCUIT',b['timestamp_ms'],
+                         *[b['measurements'][key]['value'] for key in ('voltage','current','power')],b['calibrated']])
+    return Response(output.getvalue(),media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="circuit-{session_id}.csv"'})
+
 @app.get('/api/motor/hardware/status')
 def hardware_motor_status():
     import json
@@ -638,7 +674,7 @@ def hardware_motor_status():
                 preflight=preflight,
                 operating_mode=profile.get('operating_mode','NORMAL'),
                 power_feedback_installed=profile.get('power_feedback_installed',False),
-                protection_limits_verified=profile.get('protection_limits_verified',False),
+                electrical_limits_enabled=profile.get('electrical_limits_enabled'),
                 fixed_pwm_percent=profile.get('fixed_pwm_percent'),max_duration_ms=profile.get('max_duration_ms',30000),
                 active_run=active if active and active['mode']=='hardware' else None)
 

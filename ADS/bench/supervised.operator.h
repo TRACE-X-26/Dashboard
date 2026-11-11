@@ -17,6 +17,11 @@
 #define ADS_COMM_LOSS_STOP_VERIFIED 1
 #undef ADS_INA219_CALIBRATED
 #define ADS_INA219_CALIBRATED 1
+/* Operator confirmed D5/PB4 -> IN2, HIGH on / LOW off, common cutoff.
+ * Circuit power is a bounded manual supply operation, not an automatic
+ * circuit diagnostic or a calibrated health assessment. */
+#define ADS_CIRCUIT_OUTPUT_ENABLED 1
+#define ADS_CIRCUIT_RELAY_VERIFIED 1
 /* No download or real hardware test was performed by the coding agent.
  * Live validity, voltage/current checks, heartbeat, ARM, operator confirmation,
  * fixed PWM, bounded deadline and fault shutdown remain enforced. */

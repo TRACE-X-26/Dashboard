@@ -2,7 +2,7 @@
   "device_id": "STM32-ADS",
   "asset_id": "MOTOR-001",
   "serial_identity": "",
-  "firmware_version": "0.5.0-supervised-motor",
+  "firmware_version": "0.5.2-electrical-telemetry",
   "fixture_id": "TRACE-X-prototype-operator-confirmed",
   "evidence_id": "operator-confirmation-2026-11-11",
   "calibration_id": "operator-reported-electrical-check-2026-11-11",
@@ -15,12 +15,6 @@
   "operator_enable": true,
   "fixed_pwm_percent": 50,
   "max_duration_ms": 30000,
-  "limits": {
-    "min_voltage": 11.0,
-    "max_voltage": 13.0,
-    "max_current": 1.5,
-    "max_temperature": null
-  },
   "baselines": {},
   "temperature_enabled": false,
   "motor": {
@@ -46,14 +40,7 @@
   "operating_mode": "SUPERVISED_TEST",
   "power_feedback_installed": false,
   "power_feedback_wiring_verified": false,
-  "protection_limits_verified": true,
   "supervised_testing_approved": true,
-  "protection_limits_verification": {
-    "basis": "operator_confirmation",
-    "date": "2026-11-11",
-    "independently_verified_by_agent": false,
-    "note": "Operator reports verification of 1.5 A cutoff and 11.0-13.0 V supply window. Historical logs alone do not establish motor safety ratings."
-  },
   "commissioning_attestation": {
     "basis": "operator_confirmation",
     "date": "2026-11-11",
@@ -65,5 +52,7 @@
       "motor INA219 reference measurement agreement"
     ],
     "serial_identity_note": "Fill with the connected ST-LINK USB serial number from pyserial list_ports; no device identity was guessed."
-  }
+  },
+  "circuit_power_approved": true,
+  "electrical_limits_enabled": false
 }

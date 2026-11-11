@@ -1,3 +1,5 @@
+> Current behavior: motor voltage/current cutoffs were removed at the operator's request. Use [BRANCH_POWER_UPDATE.md](BRANCH_POWER_UPDATE.md) for firmware 0.5.2, matching Pi profile migration, flashing and deployment. Older threshold statements below describe earlier versions.
+
 # STM32–Pi automated motor runtime
 
 ## Findings from the existing implementation
@@ -49,7 +51,7 @@ may be false even when every motor command exists in the source. Capabilities
 publish disabled_reason/hardware_block_reason; the new read-only preflight
 reports that exact value instead of changing gates.
 
-Current configured operator profile: 1.5 A cutoff, 11–13 V supply, fixed 50%
+Current configured operator profile: 1.5 A cutoff, 10–14 V supply, fixed 50%
 PWM, maximum 30000 ms, SUPERVISED_TEST, no PC8, temperature disabled. These
 verification flags record earlier operator attestations; they are not new
 independent bench measurements. The generic Makefile default and supervised
@@ -202,7 +204,7 @@ Never mark an unresolved physical gate verified solely to make a start pass.
 - Confirm actual flashed build/capabilities, motor power path and motor INA219
   location, electrical accuracy, relay reset/contact behavior, physical cutoff,
   communication-loss stop latency and runtime fault stops on the actual setup.
-- Confirm the 1.5 A and 11–13 V settings are accepted protections for this motor
+- Confirm the 1.5 A and 10–14 V settings are accepted protections for this motor
   and wiring. Historical one-second logs do not independently validate them.
 - Confirm encoder counts/gearing/sign for calibrated RPM; temperature stays off.
 - Health scoring still requires approved matched healthy baselines. The merged

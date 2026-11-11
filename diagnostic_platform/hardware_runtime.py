@@ -51,15 +51,12 @@ class HardwareRuntime:
             raise RunRejected('Firmware output blocked: ' + str(caps.get('hardware_block_reason', 'CONTROL_DISABLED')))
         if caps.get('operating_mode') != profile.get('operating_mode', 'NORMAL'):
             raise RunRejected('Firmware/Pi operating mode mismatch')
-        if caps.get('protection_limits_verified') is not True:
-            raise RunRejected('Firmware protection limits remain provisional / unverified')
+        if profile.get('electrical_limits_enabled') is not False or caps.get('electrical_limits_enabled') is not False:
+            raise RunRejected('Firmware/Pi electrical-limit policy mismatch')
         if caps.get('power_feedback_installed') is not profile.get('power_feedback_installed', False):
             raise RunRejected('Firmware/Pi power feedback installation mismatch')
         if profile.get('power_feedback_installed') and status.get('power_feedback_state') != 'HIGH':
             raise RunRejected('Power feedback is not HIGH')
-        for key, wire in [('min_voltage', 'min_voltage_mv'), ('max_voltage', 'max_voltage_mv'), ('max_current', 'max_current_ma')]:
-            if type(caps.get(wire)) is not int or caps[wire] != round(profile['limits'][key] * 1000):
-                raise RunRejected('Firmware/Pi protection limit mismatch: ' + key)
         if caps.get('temperature_enabled') is not profile.get('temperature_enabled', True):
             raise RunRejected('Temperature configuration differs between firmware and Pi')
         if type(caps.get('fixed_pwm_percent')) is not int or caps['fixed_pwm_percent'] != profile['fixed_pwm_percent']:
@@ -101,13 +98,6 @@ class HardwareRuntime:
             begin, end = raw.get(prefix + '_started_ms'), raw.get(prefix + '_completed_ms')
             if type(begin) is not int or type(end) is not int or ((end - begin) & 0xffffffff) > 3000:
                 raise RunRejected('Invalid sensor acquisition interval: ' + prefix)
-        limits = profile['limits']
-        if abs(channels['current']['value']) >= limits['max_current']:
-            raise RunRejected('OVERCURRENT')
-        if not limits['min_voltage'] <= channels['voltage']['value'] <= limits['max_voltage']:
-            raise RunRejected('SUPPLY_OUT_OF_RANGE')
-        if profile.get('temperature_enabled', True) and channels['temperature']['value'] >= limits['max_temperature']:
-            raise RunRejected('OVERHEATING')
         return channels
 
     def remember(self, report):

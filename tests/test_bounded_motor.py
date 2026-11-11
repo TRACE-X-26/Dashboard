@@ -46,6 +46,46 @@ class BoundedMotorTests(unittest.TestCase):
     def heartbeat(self, seq=1):
         return encode_message(ProtocolMessage(MessageType.HEARTBEAT,seq,'raspberry-pi',{},0))
 
+    def circuit_results(self, frames, mode='circuit'):
+        return {m.payload['reply_to']:m.payload['result'] for m in self.exchange(frames, mode) if 'reply_to' in m.payload}
+
+    def test_circuit_selection_protocol_supervision_and_duplicate_start(self):
+        start=self.frame('START_CIRCUIT',5,duration_ms=30000)
+        r=self.circuit_results([self.heartbeat(),self.frame('ARM_CIRCUIT',2),
+            self.frame('ARM_CIRCUIT',3,supervised_confirmed=True),
+            self.frame('GET_CIRCUIT_STATUS',4),start,start,self.frame('GET_CIRCUIT_STATUS',6),
+            self.frame('ARM_TEST',7),self.frame('STOP_CIRCUIT',8),self.frame('STOP_CIRCUIT',8)])
+        self.assertFalse(r[2]['accepted'])
+        self.assertEqual(r[3]['state'],'ARMED');self.assertFalse(r[4]['power_on'])
+        self.assertFalse(r[5]['accepted']);self.assertEqual(r[5]['reason'],'DUPLICATE_OR_OLD_REQUEST')
+        self.assertTrue(r[6]['power_on']);self.assertEqual(r[6]['run_id'],5)
+        self.assertFalse(r[7]['accepted']);self.assertFalse(r[8]['power_on'])
+
+    def test_circuit_deadline_heartbeat_sensor_fault_and_emergency(self):
+        setup=[self.heartbeat(),self.frame('ARM_CIRCUIT',2,supervised_confirmed=True),
+               self.frame('START_CIRCUIT',3,duration_ms=30000)]
+        r=self.circuit_results(setup+[b'@@',self.frame('GET_CIRCUIT_STATUS',4)])
+        self.assertEqual(r[4]['stop_reason'],'HEARTBEAT_LOSS');self.assertFalse(r[4]['power_on'])
+        r=self.circuit_results(setup+[b'!',self.frame('GET_CIRCUIT_STATUS',4)])
+        self.assertEqual(r[4]['state'],'LOCKOUT');self.assertFalse(r[4]['power_on'])
+        r=self.circuit_results(setup+[self.frame('EMERGENCY_STOP',4),self.frame('GET_CIRCUIT_STATUS',5)])
+        self.assertFalse(r[5]['power_on']);self.assertEqual(r[5]['stop_reason'],'EMERGENCY_STOP')
+        ticks=[]
+        for i in range(29):ticks.extend([b'@',self.heartbeat(10+i)])
+        r=self.circuit_results(setup+ticks+[b'@',self.frame('GET_CIRCUIT_STATUS',100)])
+        self.assertEqual(r[100]['stop_reason'],'COMPLETED');self.assertEqual(r[100]['stopped_ms'],30000)
+        self.assertFalse(r[100]['power_on'])
+
+    def test_circuit_disabled_invalid_duration_and_motor_exclusion(self):
+        r=self.circuit_results([self.heartbeat(),self.frame('ARM_CIRCUIT',2,supervised_confirmed=True)],'circuit-disabled')
+        self.assertFalse(r[2]['accepted'])
+        r=self.circuit_results([self.heartbeat(),self.frame('ARM_TEST',2),
+                               self.frame('ARM_CIRCUIT',3,supervised_confirmed=True)])
+        self.assertFalse(r[3]['accepted'])
+        r=self.circuit_results([self.heartbeat(),self.frame('ARM_CIRCUIT',2,supervised_confirmed=True),
+                               self.frame('START_CIRCUIT',3,duration_ms=30001)])
+        self.assertFalse(r[3]['accepted']);self.assertFalse(r[3]['power_on'])
+
     def test_controller_deadlines_faults_rearm_limits_and_sensor_conversions(self):
         subprocess.run([self.exe],check=True)
 

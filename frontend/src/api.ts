@@ -1,3 +1,4 @@
+import type { StationStatus } from './TestStation'
 import type { AutomatedRun, RegisteredTest } from './types'
 import type { Baseline, CircuitProfile, CircuitReport, CommandAcknowledgment, MeterReading, MotorStatus, Profile, Session, SessionDetail } from './types'
 import type { MotorHealthReplay, Recording, RecordingMetadata, RecordingSummary } from './types'
@@ -14,9 +15,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  stationStatus: () => request<StationStatus>('/api/station/status'),
+  selectBranch: (branch: 'MOTOR' | 'CIRCUIT') => request('/api/station/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch }) }),
+  circuitPower: (on: boolean, duration_ms = 30000, supervised_confirmed = false) => request('/api/station/circuit/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on, duration_ms, supervised_confirmed }) }),
   captureSimulatedCircuit: (id: string, index: number) => request<CircuitReport>(`/api/circuits/simulated-runs/${id}/capture?index=${index}`, { method: 'POST' }),
   testRegistry: (mode: string) => request<RegisteredTest[]>(`/api/automated/registry?mode=${mode}`),
-  hardwareMotorStatus: () => request<{ operating_mode: string; power_feedback_installed: boolean; protection_limits_verified: boolean; profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null; max_duration_ms: number; active_run: AutomatedRun | null; hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null; preflight: { ready: boolean; reason: string; stale: boolean } }>('/api/motor/hardware/status'),
+  hardwareMotorStatus: () => request<{ operating_mode: string; power_feedback_installed: boolean; electrical_limits_enabled: boolean | null; profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null; max_duration_ms: number; active_run: AutomatedRun | null; hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null; preflight: { ready: boolean; reason: string; stale: boolean } }>('/api/motor/hardware/status'),
   hardwareMotorPreflight: () => request<{ ready: boolean; reason: string }>('/api/motor/hardware/preflight', { method: 'POST' }),
   automatedRuns: () => request<AutomatedRun[]>('/api/automated/runs'),
   startAutomated: (configuration: object) => request<AutomatedRun>('/api/automated/runs', {

@@ -163,10 +163,7 @@ int ADS_Sensors_Ready(void)
   if(!ADS_INA219_CALIBRATED) return 0;
   if(ADS_TEMPERATURE_ENABLED && !ADS_TEMPERATURE_CALIBRATED) return 0;
   if(!s[0].valid || !s[1].valid || !s[4].valid || (ADS_TEMPERATURE_ENABLED && !s[3].valid)) return 0;
-  int64_t current=s[1].milli_value;
-  if(current<0) current=-current;
-  return ADS_MOTOR_MIN_VOLTAGE_MV>0 && s[0].milli_value>=(int32_t)ADS_MOTOR_MIN_VOLTAGE_MV &&
-    s[0].milli_value<=(int32_t)ADS_MOTOR_MAX_VOLTAGE_MV &&
-    ADS_MOTOR_MAX_CURRENT_MA>0 && current<ADS_MOTOR_MAX_CURRENT_MA &&
-    (!ADS_TEMPERATURE_ENABLED || (ADS_MOTOR_MAX_TEMPERATURE_MC>0 && s[3].milli_value<ADS_MOTOR_MAX_TEMPERATURE_MC));
+  /* Any valid fresh voltage/current is accepted, including zero. INA219
+   * conversion overflow/read failures remain invalid; never invent a zero. */
+  return !ADS_TEMPERATURE_ENABLED || (ADS_MOTOR_MAX_TEMPERATURE_MC>0 && s[3].milli_value<ADS_MOTOR_MAX_TEMPERATURE_MC);
 }

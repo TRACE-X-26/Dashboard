@@ -24,6 +24,7 @@
 #include "ads_protocol.h"
 #include "ads_motor.h"
 #include "ads_sensors.h"
+#include "ads_circuit.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -48,6 +49,8 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 static ADS_Protocol ads_protocol;
 static ADS_Test motor_test;
+static ADS_Test circuit_test;
+static uint8_t circuit_ready;
 /* ISR receives bytes while bounded I2C/one-wire operations and TX execute. */
 static uint8_t rx_byte, rx_ring[1024];
 static volatile uint16_t rx_head, rx_tail;
@@ -65,6 +68,46 @@ static uint32_t ADS_GetTick(void *context);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* Independent D5/PB4/IN2 supply channel. No motor PWM is used here. */
+static void ADS_StopCircuit(void *context)
+{
+  (void)context;
+#if ADS_CIRCUIT_RELAY_VERIFIED
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  HAL_GPIO_WritePin(CIRCUIT_RELAY_GPIO_Port,CIRCUIT_RELAY_Pin,GPIO_PIN_RESET);
+#endif
+}
+static int ADS_CircuitReady(void *context)
+{
+  (void)context; ADS_ElectricalBranch branches[2];
+  if(motor_test.running || motor_test.armed) return 0;
+  ADS_Sensors_Branches(branches,NULL);
+  return branches[1].connected && branches[1].configured &&
+    branches[1].samples[0].valid && branches[1].samples[1].valid;
+}
+static int ADS_StartCircuit(uint32_t unused,uint32_t duration,void *context)
+{
+  (void)unused; (void)duration; (void)context;
+#if ADS_PHYSICAL_OUTPUT_ENABLED && ADS_CIRCUIT_OUTPUT_ENABLED && ADS_CIRCUIT_RELAY_VERIFIED && ADS_KILL_SWITCH_VERIFIED && ADS_COMM_LOSS_STOP_VERIFIED
+  uint32_t irq=__get_PRIMASK(); __disable_irq();
+  if(circuit_test.locked || (uint32_t)(HAL_GetTick()-circuit_test.last_heartbeat_ms)>=2000U || !ADS_CircuitReady(NULL)) { __set_PRIMASK(irq); return 0; }
+  ADS_Motor_Stop();
+  HAL_GPIO_WritePin(CIRCUIT_RELAY_GPIO_Port,CIRCUIT_RELAY_Pin,GPIO_PIN_SET);
+  __set_PRIMASK(irq);
+  return 1;
+#else
+  return 0;
+#endif
+}
+void ADS_Circuit_Poll(uint32_t now_ms)
+{
+  if(circuit_ready) ADS_Test_Poll(&circuit_test,now_ms);
+}
+void ADS_Circuit_Fault(void)
+{
+  ADS_StopCircuit(NULL);
+  if(circuit_ready) ADS_Test_Fault(&circuit_test,HAL_GetTick(),"OUTPUTS_STOPPED");
+}
 static void ADS_HeartbeatMotor(uint32_t now_ms, void *context)
 {
   (void)context;
@@ -75,19 +118,20 @@ static void ADS_StopMotor(void *context)
 {
   (void)context;
   ADS_Motor_Stop();
+  ADS_Circuit_Fault();
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
   if (uart->Instance!=USART2) return;
   uint16_t next=(uint16_t)((rx_head+1U)&1023U);
-  if (next==rx_tail) { rx_fault=1; ADS_Motor_Fault(); }
+  if (next==rx_tail) { rx_fault=1; ADS_Motor_Fault(); ADS_Circuit_Fault(); }
   else { rx_ring[rx_head]=rx_byte; __DMB(); rx_head=next; }
-  if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) { rx_fault=1; ADS_Motor_Fault(); }
+  if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) { rx_fault=1; ADS_Motor_Fault(); ADS_Circuit_Fault(); }
 }
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
 {
-  if (uart->Instance==USART2) { rx_fault=1; ADS_Motor_Fault(); }
+  if (uart->Instance==USART2) { rx_fault=1; ADS_Motor_Fault(); ADS_Circuit_Fault(); }
 }
 static void ADS_ReceivePoll(void)
 {
@@ -99,6 +143,7 @@ static void ADS_ReceivePoll(void)
     if (HAL_UART_Receive_IT(&huart2,&rx_byte,1)!=HAL_OK) rx_fault=1;
     __set_PRIMASK(irq);
     ADS_Test_Fault(&motor_test,HAL_GetTick(),"UART_RECEIVE_FAULT");
+    ADS_Test_Fault(&circuit_test,HAL_GetTick(),"UART_RECEIVE_FAULT");
   }
   for(unsigned budget=0;budget<512 && rx_tail!=rx_head && !rx_fault;budget++) {
     uint8_t byte=rx_ring[rx_tail]; __DMB(); rx_tail=(uint16_t)((rx_tail+1U)&1023U);
@@ -108,7 +153,7 @@ static void ADS_ReceivePoll(void)
 static int ADS_TestReady(void *context)
 {
   (void)context;
-  return ADS_Motor_OperationReady() && ADS_Sensors_Ready();
+  return !circuit_test.running && !circuit_test.armed && ADS_Motor_OperationReady() && ADS_Sensors_Ready();
 }
 static int ADS_TestFeedback(void *context)
 { (void)context; return ADS_Motor_PowerFeedbackState(); }
@@ -138,7 +183,7 @@ static int ADS_UART_Transmit(const uint8_t *data, size_t length, void *context)
   while (length) {
     uint16_t chunk=(uint16_t)(length>24U?24U:length);
     if (HAL_UART_Transmit(uart,(uint8_t *)data,chunk,100U)!=HAL_OK) {
-      ADS_Motor_Fault(); return -1;
+      ADS_Motor_Fault(); ADS_Circuit_Fault(); return -1;
     }
     data+=chunk; length-=chunk;
     ADS_Sensors_Poll(); ADS_Motor_Poll(HAL_GetTick());
@@ -172,6 +217,13 @@ int main(void)
 
   /* USER CODE BEGIN Init */
   ADS_Motor_Init();
+#if ADS_CIRCUIT_RELAY_VERIFIED
+  ADS_StopCircuit(NULL);
+  GPIO_InitTypeDef circuit_gpio={0};
+  circuit_gpio.Pin=CIRCUIT_RELAY_Pin; circuit_gpio.Mode=GPIO_MODE_OUTPUT_PP;
+  circuit_gpio.Pull=GPIO_NOPULL; circuit_gpio.Speed=GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(CIRCUIT_RELAY_GPIO_Port,&circuit_gpio);
+#endif
 
   /* USER CODE END Init */
 
@@ -201,6 +253,13 @@ int main(void)
   ADS_Protocol_SetMeasurementInfo(&ads_protocol, ADS_Sensors_Info);
   ADS_Protocol_SetBranches(&ads_protocol, ADS_Sensors_Branches);
   ADS_Protocol_SetMotorTest(&ads_protocol, &motor_test);
+  ADS_Test_Init(&circuit_test,100,30000,
+    ADS_PHYSICAL_OUTPUT_ENABLED && ADS_CIRCUIT_OUTPUT_ENABLED && ADS_CIRCUIT_RELAY_VERIFIED && ADS_KILL_SWITCH_VERIFIED && ADS_COMM_LOSS_STOP_VERIFIED && ADS_SUPERVISED_TESTING_APPROVED,
+    ADS_CircuitReady,ADS_StartCircuit,ADS_StopCircuit,NULL);
+  circuit_test.supervised_required=1;
+  circuit_test.disabled_reason="CIRCUIT_CONTROL_DISABLED";
+  circuit_ready=1;
+  ADS_Protocol_SetCircuitTest(&ads_protocol,&circuit_test);
   ADS_Protocol_SetHeartbeatCallback(&ads_protocol, ADS_HeartbeatMotor);
   /* Independent watchdog: main-loop lockup resets to disabled startup.
    * LSI tolerance means the nominal ~2s setting needs bench measurement. */
@@ -367,7 +426,7 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  ADS_Motor_Fault();
+  ADS_Motor_Fault(); ADS_Circuit_Fault();
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)

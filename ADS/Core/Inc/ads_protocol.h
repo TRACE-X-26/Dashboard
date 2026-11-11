@@ -58,6 +58,7 @@ typedef struct
   uint8_t has_received_request;
   ADS_ProtocolSafetyState safety_state;
   ADS_Test *motor_test;
+  ADS_Test *circuit_test;
   uint32_t sent_start_event, sent_stop_event;
   ADS_InfoFn info;
   ADS_BranchesFn branches;
@@ -76,6 +77,7 @@ void ADS_Protocol_Init(ADS_Protocol *protocol,
 void ADS_Protocol_SetBranches(ADS_Protocol *, ADS_BranchesFn);
 void ADS_Protocol_SetHardwareCallbacks(ADS_Protocol *protocol, ADS_AcquireFn acquire, ADS_StopFn stop);
 void ADS_Protocol_SetMotorTest(ADS_Protocol *, ADS_Test *);
+void ADS_Protocol_SetCircuitTest(ADS_Protocol *, ADS_Test *);
 void ADS_Protocol_SetMeasurementInfo(ADS_Protocol *, ADS_InfoFn);
 void ADS_Protocol_EmitMotorEvents(ADS_Protocol *);
 void ADS_Protocol_SetHeartbeatCallback(ADS_Protocol *protocol, ADS_HeartbeatFn heartbeat);
