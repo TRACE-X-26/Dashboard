@@ -401,7 +401,7 @@ def capture_physical_circuit(session_id: int) -> dict:
 
 @app.get("/api/scenarios")
 def scenarios() -> list[str]:
-    return list(SimulatedMotorSource.SCENARIOS)
+    return [name for name in SimulatedMotorSource.SCENARIOS if name != "overheating"]
 
 
 @app.get("/api/baselines")
@@ -453,7 +453,12 @@ def list_recordings() -> list[dict]:
 
 @app.get("/api/recordings/motor-health-replay")
 def motor_health_replay() -> dict:
-    path = ROOT / 'data/archive_replay.json'
+    path = ROOT / 'reference_data/archive_replay.json'
+    if not path.is_file():
+        path = ROOT / 'data/archive_replay.json'
+    audited = Path(os.getenv('ADS_MOTOR_DATA_DIR', str(ROOT / 'data/motor_audit'))) / 'archive_replay.json'
+    if audited.is_file():
+        path = audited
     try:
         return load_json(path)
     except FileNotFoundError:
@@ -647,6 +652,11 @@ def hardware_motor_preflight():
 def automated_registry(mode: str='simulation'):
     try:return test_engine().available(mode)
     except RunRejected as exc:raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+@app.get('/api/automated/catalog')
+def automated_catalog():
+    from diagnostic_platform.test_registry import experiment_catalog
+    return experiment_catalog()
 
 @app.post('/api/automated/runs',status_code=201)
 def start_automated_run(payload: AutomatedRunPayload):

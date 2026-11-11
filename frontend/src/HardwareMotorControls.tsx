@@ -1,3 +1,4 @@
+import { captureRunConditions } from './runConditions'
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import INA219Readings from './INA219Readings'
@@ -62,12 +63,14 @@ export default function HardwareMotorControls() {
   async function start() {
     if (supervised && !supervisedConfirmed) return
     if (!window.confirm(`${supervised ? 'SUPERVISED TEST: remain present with the physical power cutoff accessible. PC8 feedback may not be installed. ' : ''}Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
+    const conditions = captureRunConditions()
+    if (!conditions) return
     const confirmation = supervised && supervisedConfirmed
     setSupervisedConfirmed(false)
     setPending(true); setError('')
     try {
       const next = await api.startAutomated({ mode: 'hardware', device_id: status?.asset_id,
-        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation })
+        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation, ...conditions })
       setRun(next)
     } catch (err) { setError(String(err)) }
     finally { setPending(false) }
@@ -79,7 +82,7 @@ export default function HardwareMotorControls() {
   }
   const sample = run?.latest_measurement
   return <section className="panel motor-controls">
-    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands · temperature disabled</p></div><span className="mode-chip">HARDWARE</span></div>
+    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands</p></div><span className="mode-chip">HARDWARE</span></div>
     <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity, protection and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
     <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Protection limits: {status?.protection_limits_verified ? 'verified configuration' : 'PROVISIONAL / START BLOCKED'}</p>
     <p>Hardware runtime: {status?.hardware_control_enabled ? 'explicitly enabled' : 'disabled'} · STM32 output permission: {status?.firmware_hardware_control == null ? 'not checked' : status.firmware_hardware_control ? 'reported enabled' : 'reported disabled'}</p>

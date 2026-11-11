@@ -228,6 +228,24 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertFalse(any(p['available'] for p in engine.available('hardware')))
         self.assertTrue(set(self.commands()) <= {'GET_CAPABILITIES', 'GET_STATUS', 'READ_MEASUREMENTS'})
 
+    def test_guided_procedure_approval_survives_runtime_preflight_gating(self):
+        engine = self.engine()
+        self.assertTrue(engine.preflight()['ready'])
+        available = {p['id']: p['available'] for p in engine.available('hardware')}
+        self.assertFalse(available['steady_state'])
+        request = {**self.request(), 'tests': ['steady_state'], 'duration_ms': 5000,
+                   'load_id': 'FIXTURE_ONLY', 'condition': 'TEST_ONLY'}
+        with self.assertRaisesRegex(RunRejected, 'Unavailable procedure'):
+            engine.start(request)
+        self.profile['additional_procedures_approved'] = ['steady_state']
+        self.path.write_text(json.dumps(self.profile))
+        available = {p['id']: p['available'] for p in engine.available('hardware')}
+        self.assertTrue(available['steady_state'])
+        request['duration_ms'] = 300
+        with self.assertRaisesRegex(RunRejected, 'at least five seconds'):
+            engine.start(request)
+        self.assertNotIn('ARM_TEST', self.commands())
+
     def test_emergency_stop_latches_and_never_restarts(self):
         engine = self.engine()
         request = self.request()

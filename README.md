@@ -2,6 +2,8 @@
 
 Current STM32–Pi runtime: [hardware permission, read-only preflight, status meanings and data-preserving deployment](docs/STM32_PI_AUTOMATED_RUNTIME.md). Physical Pi commands default off via ADS_HARDWARE_CONTROL_ENABLED=false. ADS_MODE=simulation can retain the existing demos while the separately authorized automated engine is used; actual firmware capability and live protections must pass before ARM.
 
+Current motor-data integration, temperature removal, supported procedures and Pi update steps are documented in [the integration guide](docs/MOTOR_DATA_INTEGRATION.md) and [completion report](docs/COMPLETION_REPORT.md).
+
 November 11 current build: [supervised motor-enabled firmware and matching Pi setup](docs/SUPERVISED_OPERATOR_BUILD.md). CubeIDE Debug/Release explicitly select the operator-confirmed profile (50% PWM, up to 30 seconds, 1.5 A cutoff, 11–13 V). The motor boots stopped; live checks and per-run authorization remain required. Hardware acceptance is operator-reported, not independently verified by the coding agent. The generic Makefile default and supervised example remain output-disabled. Earlier milestone and disabled-output descriptions below are historical.
 
 November 9 operating-mode update: [normal PC8 feedback and explicit supervised testing](docs/SUPERVISED_MOTOR_TESTING.md), firmware 0.5.0-supervised-motor. Earlier hashes and mode requirements below are historical.

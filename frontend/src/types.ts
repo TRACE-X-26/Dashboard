@@ -223,7 +223,8 @@ export type AutomatedRun = {
   elapsed_seconds?: number; requested_pwm_percent?: number; applied_pwm_percent?: number; device_id?: string;
   samples?: { received_at: string; quality: string[]; raw: { measurements?: Record<string, { value: number | null }> } }[];
   ended_at: string | null; latest_measurement?: Measurement; stop_confirmed: boolean;
-  steps: { test_id: string; result?: { findings: string[] } | null }[];
+  steps: { test_id: string; result?: { findings: string[]; comparisons?: { channel: string; observed: number; reference_range: number[];
+    deviation: number; observed_std: number; approved_max_std: number; possible_causes: string; followup: string }[] } | null }[];
 }
 
 export type ElectricalBranch = {

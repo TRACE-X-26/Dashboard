@@ -1,3 +1,4 @@
+import { captureRunConditions } from './runConditions'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
@@ -50,7 +51,6 @@ function SignalChart({ data }: { data: Measurement[] }) {
           <Tooltip contentStyle={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 10 }} />
           <Line yAxisId="electrical" type="monotone" dataKey="voltage" name="Voltage (V)" stroke="#53c7f0" dot={false} strokeWidth={2} />
           <Line yAxisId="electrical" type="monotone" dataKey="current" name="Current (A)" stroke="#ffb24c" dot={false} strokeWidth={2} />
-          <Line yAxisId="electrical" type="monotone" dataKey="temperature" name="Temperature (°C)" stroke="#f0657f" dot={false} strokeWidth={2} />
           <Line yAxisId="speed" type="monotone" dataKey="rpm" name="RPM" stroke="#9b87f5" dot={false} strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>
@@ -140,7 +140,7 @@ function MotorControl() {
         {state?.emergency_stop && <button className="reset-estop" onClick={() => send('reset_emergency_stop')}>Reset emergency stop</button>}
       </div>
       <div className="motor-side">
-        <section className="metric-grid motor-metrics"><Metric label="Output voltage" value={fmt(telemetry?.voltage, 2)} unit=" V"/><Metric label="Motor current" value={fmt(telemetry?.current, 2)} unit=" A"/><Metric label="Estimated speed" value={fmt(telemetry?.rpm, 0)} unit=" RPM"/><Metric label="Motor temperature" value={fmt(telemetry?.temperature, 1)} unit=" °C"/></section>
+        <section className="metric-grid motor-metrics"><Metric label="Output voltage" value={fmt(telemetry?.voltage, 2)} unit=" V"/><Metric label="Motor current" value={fmt(telemetry?.current, 2)} unit=" A"/><Metric label="Estimated speed" value={fmt(telemetry?.rpm, 0)} unit=" RPM"/></section>
         <div className={`panel command-ack ${accepted ? 'ack-accepted' : 'ack-rejected'}`}><div><span>{accepted ? '✓' : '!'}</span><div><h2>{accepted ? 'Command acknowledged' : 'Command rejected'}</h2><p>{acknowledgment}</p></div></div><small>Controller sequence {state?.sequence ?? 0} · {state ? new Date(state.updated_at * 1000).toLocaleTimeString() : 'waiting'}</small></div>
         <div className="panel safety-panel"><div className="panel-title"><div><h2>Active safety interlocks</h2><p>These rules will transfer to the STM32 implementation.</p></div></div><div className="safety-rule"><i className={state?.emergency_stop ? 'dot danger' : 'dot ready'}/><div><strong>Emergency stop latch</strong><span>{state?.emergency_stop ? 'Latched — output blocked' : 'Clear'}</span></div></div><div className="safety-rule"><i className="dot ready"/><div><strong>Direction-change guard</strong><span>Requires 0% PWM before reversal</span></div></div><div className="safety-rule"><i className="dot ready"/><div><strong>Enable guard</strong><span>PWM blocked while driver is disabled</span></div></div></div>
       </div>
@@ -189,7 +189,7 @@ function LiveMultimeter() {
       </div>
       <div className="panel channel-panel"><div className="panel-title"><div><h2>Available channels</h2><p>Live simulated values mapped to the Fritzing hardware.</p></div></div>{reading?.channels.map(item => <button className={selected === item.channel ? 'channel selected' : 'channel'} onClick={() => setSelected(item.channel)} key={item.channel}><div><span>{item.label}</span><small>{item.sensor}</small></div><strong>{fmt(item.value, 2)} <small>{item.unit}</small></strong></button>)}</div>
     </section>
-    <section className="sensor-map"><div><strong>INA219 #1</strong><span>Motor voltage, current, and power</span></div><div><strong>INA219 #2</strong><span>Circuit-under-test voltage and current</span></div><div><strong>Voltage probe</strong><span>External DC test point through divider</span></div><div><strong>DS18B20</strong><span>Motor case temperature</span></div></section>
+    <section className="sensor-map"><div><strong>INA219 #1</strong><span>Motor voltage, current, and power</span></div><div><strong>INA219 #2</strong><span>Circuit-under-test voltage and current</span></div><div><strong>Voltage probe</strong><span>External DC test point through divider</span></div></section>
   </>
 }
 
@@ -248,6 +248,7 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
   const [progress, setProgress] = useState(0)
   const socketRef = useRef<WebSocket | null>(null)
   const latest = measurements.at(-1)
+  const scripted = scenario.startsWith('auto:') || scenario.startsWith('hardware:')
 
   useEffect(() => {
     if (!device && profiles.length) setDevice(profiles[0].device_id)
@@ -272,11 +273,14 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
         } catch (error) { setStatus(String(error)); return }
       }
       const selection = scenario.split(':')[1]
+      const needsConditions = physical || ['load_response', 'friction_response', 'steady_state', 'voltage_stability', 'power_consumption'].includes(selection)
+      const conditions = needsConditions ? captureRunConditions() : {}
+      if (needsConditions && !conditions) return
       setRunning(true); setMeasurements([]); setReport(null); setProgress(0)
       try {
         const run = await api.startAutomated({ mode: physical ? 'hardware' : 'simulation', device_id: device,
-          tests: selection === 'all' ? [] : [selection], run_all: selection === 'all', duration_ms: samples * 100,
-          operator_authorized: physical, supervised_confirmed: supervisedConfirmed })
+          tests: selection === 'all' ? [] : [selection], run_all: selection === 'all', duration_ms: Math.round(samples * 100),
+          operator_authorized: physical, supervised_confirmed: supervisedConfirmed, ...conditions })
         setAutomated(run)
         const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/automated/${run.id}`)
         socketRef.current = socket
@@ -292,7 +296,13 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
             setRunning(false); socket.close(); socketRef.current = null; onComplete()
             setReport({ device_id: device, condition: update.condition ?? 'INSUFFICIENT_DATA',
               health_score: update.health_score,
-              findings: update.steps.flatMap(step => (step.result?.findings ?? []).map(message => ({ code: step.test_id, severity: 'WARNING', message, possible_causes: [] }))) })
+              findings: update.steps.flatMap(step => [
+                ...(step.result?.findings ?? []).map(message => ({ code: step.test_id, severity: 'WARNING' as const, message, possible_causes: [] })),
+                ...(step.result?.comparisons ?? []).map(item => ({ code: step.test_id + '_' + item.channel,
+                  severity: item.observed < item.reference_range[0] || item.observed > item.reference_range[1] || item.observed_std > item.approved_max_std ? 'WARNING' as const : 'PASS' as const,
+                  message: `${item.channel}: ${item.observed.toFixed(3)} against ${item.reference_range.join('–')}; difference ${item.deviation.toFixed(3)}. ${item.followup}`,
+                  possible_causes: [item.possible_causes] }))
+              ]) })
           }
         }
         socket.onclose = () => {
@@ -327,13 +337,13 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
     <section className="control-bar">
       <label>Device<select value={device} onChange={e => setDevice(e.target.value)} disabled={running}>{profiles.map(p => <option key={p.device_id}>{p.device_id}</option>)}</select></label>
       <label>Scenario<select value={scenario} onChange={e => { setScenario(e.target.value); setHardware(e.target.value.startsWith('hardware:')) }} disabled={running}>{scenarios.map(s => <option value={s} key={s}>Simulation: {s.replaceAll('_', ' ')}</option>)}<option value="auto:all">Simulation: run all eligible tests</option>{registry.map(test => <option value={`auto:${test.id}`} key={`auto:${test.id}`} disabled={!test.available} title={test.unavailable_reason}>{test.name}{!test.available ? ` — ${test.unavailable_reason}` : ''}</option>)}<option value="hardware:all" disabled={!hardwareRegistry.some(test => test.available)}>Hardware: run all approved tests</option>{hardwareRegistry.map(test => <option value={`hardware:${test.id}`} key={`hardware:${test.id}`} disabled={!test.available} title={test.unavailable_reason}>Hardware: {test.name}{!test.available ? ` — ${test.unavailable_reason}` : ''}</option>)}</select></label>
-      <label>Samples<input type="number" min="5" max="500" value={samples} onChange={e => setSamples(Number(e.target.value))} disabled={running}/></label>
+      <label>{scripted ? 'Duration (seconds)' : 'Samples'}<input type="number" min={scripted ? 0.1 : 5} max={scripted ? 30 : 500} step={scripted ? 0.1 : 1} value={scripted ? samples / 10 : samples} onChange={e => setSamples(Number(e.target.value) * (scripted ? 10 : 1))} disabled={running}/></label>
       <button className="primary" onClick={start} disabled={running || !device}>{running ? 'Test running…' : 'Start diagnostic'}</button>
     </section>
     <div className="progress"><span style={{ width: `${progress}%` }}/></div><p className="run-status">{status} · {progress}%</p>
     {automated && <div className="control-bar"><button className="secondary" disabled={!running} onClick={() => api.stopAutomated(automated.id).catch(error => setStatus(String(error)))}>Stop Test</button><button className="danger" disabled={!running} onClick={() => api.stopAutomated(automated.id, true).catch(error => setStatus(String(error)))}>Emergency Stop</button><button className="secondary" disabled={!automated.ended_at} onClick={() => window.open(`/api/automated/runs/${automated.id}/report`, '_blank')}>Download Report</button></div>}
-    <section className="metric-grid five">
-      <Metric label="Voltage" value={fmt(latest?.voltage, 2)} unit=" V"/><Metric label="Current" value={fmt(latest?.current, 2)} unit=" A"/><Metric label="Power" value={fmt(latest?.input_power, 1)} unit=" W"/><Metric label="Speed" value={fmt(latest?.rpm, 0)} unit=" RPM"/><Metric label="Temperature" value={fmt(latest?.temperature, 1)} unit=" °C"/>
+    <section className="metric-grid">
+      <Metric label="Voltage" value={fmt(latest?.voltage, 2)} unit=" V"/><Metric label="Current" value={fmt(latest?.current, 2)} unit=" A"/><Metric label="Power" value={fmt(latest?.input_power, 1)} unit=" W"/><Metric label="Speed" value={fmt(latest?.rpm, 0)} unit=" RPM"/>
     </section>
     <section className="split chart-split"><div className="panel"><div className="panel-title"><div><h2>Live signals</h2><p>Electrical and mechanical measurements by sample</p></div></div><SignalChart data={measurements}/></div>
       <div className="panel findings"><div className="panel-title"><div><h2>Diagnostic analysis</h2><p>{report ? `${report.health_score == null ? 'No validated health score' : `${report.health_score}% health`} · ${report.condition}` : 'Waiting for measurement data'}</p></div></div>
@@ -369,7 +379,7 @@ function History({ sessions, onBaseline }: { sessions: Session[]; onBaseline: ()
   }
   return <><header><div><p className="eyebrow">TEST RECORDS</p><h1>Diagnostic history</h1><p>Inspect stored signals, findings, and health results.</p></div></header>
     <section className="history-layout"><div className="panel session-list">{automatedRuns.map(run => <button className={automatedDetail?.id === run.id ? 'session selected' : 'session'} onClick={() => api.automatedRun(run.id).then(setAutomatedDetail).catch(error => setMessage(String(error)))} key={run.id}><span><strong>{run.active_test ?? 'Automated sequence'}</strong><small>{run.source} · {run.id.slice(0, 8)}</small></span><Status value={run.state}/></button>)}{sessions.map(s => <button className={selectedId === s.id ? 'session selected' : 'session'} onClick={() => { setAutomatedDetail(null); setSelectedId(s.id) }} key={s.id}><span><strong>Test #{s.id}</strong><small>{s.device_id} · {s.scenario.replaceAll('_', ' ')}</small></span><Status value={s.condition ?? s.state}/></button>)}</div>
-      <div className="panel detail">{automatedDetail ? <><div className="panel-title"><div><h2>Automated test · {automatedDetail.id.slice(0,8)}</h2><p>{automatedDetail.source} · {automatedDetail.device_id} · {automatedDetail.reason ?? automatedDetail.condition}</p></div><Status value={automatedDetail.state}/></div><section className="metric-grid compact"><Metric label="Health" value={automatedDetail.health_score == null ? '—' : String(automatedDetail.health_score)} unit="%"/><Metric label="Source" value={automatedDetail.source}/><Metric label="State" value={automatedDetail.state}/></section><SignalChart data={(automatedDetail.samples ?? []).map((sample,index) => ({ sequence: index+1, timestamp: sample.received_at, voltage: sample.raw.measurements?.voltage?.value ?? null, current: sample.raw.measurements?.current?.value ?? null, rpm: sample.raw.measurements?.rpm?.value ?? null, temperature: sample.raw.measurements?.temperature?.value ?? null, input_power: sample.raw.measurements?.power?.value ?? null, resistance: null, vibration_rms: null }))}/><p>{automatedDetail.stop_confirmed ? 'Software stop acknowledged; physical stop is not measured here.' : 'Stop confirmation unavailable.'}</p><button className="secondary" disabled={!automatedDetail.ended_at} onClick={() => window.open(`/api/automated/runs/${automatedDetail.id}/report`,'_blank')}>Download Report</button></> : detail ? <><div className="panel-title"><div><h2>Test #{detail.summary.id}</h2><p>{new Date(detail.summary.started_at).toLocaleString()} · {detail.summary.sample_count} samples</p></div><Status value={detail.summary.condition ?? detail.summary.state}/></div>
+      <div className="panel detail">{automatedDetail ? <><div className="panel-title"><div><h2>Automated test · {automatedDetail.id.slice(0,8)}</h2><p>{automatedDetail.source} · {automatedDetail.device_id} · {automatedDetail.reason ?? automatedDetail.condition}</p></div><Status value={automatedDetail.state}/></div><section className="metric-grid compact"><Metric label="Health" value={automatedDetail.health_score == null ? '—' : String(automatedDetail.health_score)} unit="%"/><Metric label="Source" value={automatedDetail.source}/><Metric label="State" value={automatedDetail.state}/></section><SignalChart data={(automatedDetail.samples ?? []).map((sample,index) => ({ sequence: index+1, timestamp: sample.received_at, voltage: sample.raw.measurements?.voltage?.value ?? null, current: sample.raw.measurements?.current?.value ?? null, rpm: sample.raw.measurements?.rpm?.value ?? null, temperature: sample.raw.measurements?.temperature?.value ?? null, input_power: sample.raw.measurements?.power?.value ?? null, resistance: null, vibration_rms: null }))}/>{automatedDetail.steps.map(step => <div className="finding-list" key={step.test_id}>{step.result?.findings.map((message, index) => <p key={index}>{message}</p>)}{step.result?.comparisons?.map(item => <p key={item.channel}>{item.channel}: {item.observed.toFixed(3)} · Approved range {item.reference_range.join('–')} · Difference {item.deviation.toFixed(3)} · {item.possible_causes} {item.followup}</p>)}</div>)}<p>{automatedDetail.stop_confirmed ? 'Software stop acknowledged; physical stop is not measured here.' : 'Stop confirmation unavailable.'}</p><button className="secondary" disabled={!automatedDetail.ended_at} onClick={() => window.open(`/api/automated/runs/${automatedDetail.id}/report`,'_blank')}>Download Report</button></> : detail ? <><div className="panel-title"><div><h2>Test #{detail.summary.id}</h2><p>{new Date(detail.summary.started_at).toLocaleString()} · {detail.summary.sample_count} samples</p></div><Status value={detail.summary.condition ?? detail.summary.state}/></div>
         <section className="metric-grid compact"><Metric label="Health" value={detail.summary.health_score == null ? '—' : String(detail.summary.health_score)} unit="%"/><Metric label="Scenario" value={detail.summary.scenario.replaceAll('_', ' ')}/><Metric label="State" value={detail.summary.state}/></section><SignalChart data={detail.measurements}/><div className="finding-list">{detail.findings.map(f => <FindingCard finding={f} key={f.code}/>)}</div></> : <p className="empty">Select a test.</p>}</div></section>
     {!automatedDetail && detail?.summary.state === 'COMPLETE' && <div className="history-actions"><button className="primary" onClick={learnBaseline} disabled={detail.summary.condition !== 'HEALTHY'}>Use this test as healthy baseline</button><span>{message || (detail.summary.condition !== 'HEALTHY' ? 'Only a healthy result can be learned as a baseline.' : '')}</span></div>}
   </>
@@ -384,7 +394,7 @@ function Profiles({ profiles, baselines, refresh }: { profiles: Profile[]; basel
   return <><header><div><p className="eyebrow">DEVICE LIBRARY</p><h1>Motor profiles</h1><p>Define specifications used by the diagnostic engine.</p></div></header>
     <section className="split profiles"><form className="panel profile-form" onSubmit={submit}><div className="panel-title"><div><h2>Add or update profile</h2><p>All limits must be positive engineering values.</p></div></div>
       <label>Device ID<input required value={form.device_id} onChange={e => setForm({...form, device_id:e.target.value})}/></label><div className="form-grid">{([
-        ['rated_voltage','Rated voltage','V'],['rated_current','Rated current','A'],['rated_rpm','Rated speed','RPM'],['winding_resistance','Winding resistance','Ω'],['max_current','Maximum current','A'],['max_temperature','Maximum temperature','°C'],
+        ['rated_voltage','Rated voltage','V'],['rated_current','Rated current','A'],['rated_rpm','Rated speed','RPM'],['winding_resistance','Winding resistance','Ω'],['max_current','Maximum current','A'],
       ] as [keyof Profile,string,string][]).map(([key,label,unit]) => <label key={key}>{label}<div className="input-unit"><input type="number" step="any" min="0.001" required value={form[key]} onChange={e => setForm({...form,[key]:Number(e.target.value)})}/><span>{unit}</span></div></label>)}</div><button className="primary" type="submit">Save profile</button>{message && <p className="form-message">{message}</p>}</form>
       <div className="panel"><div className="panel-title"><div><h2>Saved devices</h2><p>{profiles.length} configured profile{profiles.length === 1 ? '' : 's'}</p></div></div>{profiles.map(p => { const baseline = baselines.find(b => b.device_id === p.device_id); return <div className="profile-row" key={p.device_id}><div><strong>{p.device_id}</strong><small>{p.rated_voltage} V · {p.rated_current} A · {p.rated_rpm} RPM</small></div><span>{baseline ? `Baseline: ${baseline.sample_count} samples` : 'No baseline'}</span></div> })}</div></section>
   </>

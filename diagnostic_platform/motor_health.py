@@ -17,7 +17,7 @@ CURRENT = "motor_current_A"
 POWER = "motor_power_W"
 RPM = "motor_rpm"
 TEMP = "motor_temperature_C"
-METRICS = (VOLTAGE, CURRENT, RPM, TEMP)
+METRICS = (VOLTAGE, CURRENT, RPM)
 CONTEXT_FIELDS = ("asset_id", "pwm_percent", "load_id", "direction", "calibration_id")
 WINDOW_START_MS = 3000
 WINDOW_END_MS = 13000
@@ -134,11 +134,10 @@ def replay_csv(rows, test_number=None):
             value = number(match.group(1))
             if value is None:
                 break
+            if field == TEMP:
+                continue
             if field == POWER:
-                # Archived serial cycles emit adjacent Voltage, Current, Power lines.
-                # The Power line closes the cycle. Compute from the two logged inputs.
-                if set(electrical) == {VOLTAGE, CURRENT}:
-                    values[POWER].append(electrical[VOLTAGE] * electrical[CURRENT])
+                values[POWER].append(value)
                 electrical.clear()
             else:
                 values[field].append(value)
@@ -158,8 +157,6 @@ def replay_csv(rows, test_number=None):
         "reported_rpm_requires_encoder_calibration_verification",
         "actual_pwm_and_direction_unverified",
     ] if summary else ["no_motor_measurements"]
-    if TEMP not in summary or summary[TEMP]["min"] == summary[TEMP]["max"] == 0:
-        reasons.append("housing_temperature_unverified")
     name, planned_pwm = TEST_CATALOG.get(test_number, (None, None))
     if planned_pwm is not None and target_pwm and target_pwm != {planned_pwm}:
         reasons.append("logged_target_pwm_differs_from_test_plan")
@@ -218,7 +215,6 @@ def summarize_run(rows, context):
         direction = row.get("motor_direction")
         if (any(value is None for value in sample.values())
                 or sample[VOLTAGE] < 0
-                or row.get("temperature_valid") is not True
                 or direction not in ("forward", "reverse", "stopped")
                 or (direction == "stopped") != (sample[RPM] == 0)):
             rejected += 1

@@ -22,7 +22,7 @@ class MotorDiagnosticEngine:
         findings: list[Finding] = []
         missing = [
             name
-            for name in ("voltage", "current", "temperature")
+            for name in ("voltage", "current")
             if getattr(measurement, name) is None
         ]
         if missing:
@@ -77,16 +77,6 @@ class MotorDiagnosticEngine:
                     Severity.WARNING,
                     f"Supply voltage is {(1 - voltage_ratio) * 100:.0f}% below rated voltage.",
                     ("Weak supply", "Wiring voltage drop", "Incorrect supply setting"),
-                )
-            )
-
-        if measurement.temperature is not None and measurement.temperature >= profile.max_temperature:
-            findings.append(
-                Finding(
-                    "OVERHEATING",
-                    Severity.CRITICAL,
-                    "Temperature exceeds the motor's safe limit.",
-                    ("Overload", "Poor cooling", "Bearing friction"),
                 )
             )
 

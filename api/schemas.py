@@ -95,6 +95,10 @@ class PhysicalCircuitArm(BaseModel):
     probe_confirmed: Literal[True]
 
 class AutomatedRunPayload(BaseModel):
+    load_id: str = Field(default='UNKNOWN', min_length=1, max_length=120)
+    condition: str = Field(default='UNKNOWN', min_length=1, max_length=200)
+    attached_mass_g: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    fixture_notes: str = Field(default='', max_length=2000)
     mode: Literal['simulation','hardware'] = 'simulation'
     device_id: str = Field(default='MOTOR-001',min_length=1,max_length=80)
     tests: list[str] = Field(default_factory=list,max_length=20)

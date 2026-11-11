@@ -205,9 +205,11 @@ Never mark an unresolved physical gate verified solely to make a start pass.
 - Confirm the 1.5 A and 11–13 V settings are accepted protections for this motor
   and wiring. Historical one-second logs do not independently validate them.
 - Confirm encoder counts/gearing/sign for calibrated RPM; temperature stays off.
-- Existing health scoring still requires approved matched healthy baselines and
-  currently requires temperature acquisitions. No baseline was generated or
-  retrained here, and no validated hardware health percentage is claimed.
+- Health scoring still requires approved matched healthy baselines. The merged
+  upstream motor-data update retires temperature from motor assessment and adds
+  separately approved guided procedures and baseline review. Those features are
+  preserved; no baseline was generated or retrained during this runtime update,
+  and no validated hardware health percentage is claimed.
 - Fit/touch performance on the physical LCD remains a bench check. Existing
   styles, navigation, simulation and recording/replay routes are preserved.
 
@@ -231,18 +233,20 @@ Never mark an unresolved physical gate verified solely to make a start pass.
 - README.md and this guide: current configuration and deployment instructions.
 
 Pre-existing local CubeIDE preferences, launch state and main.h comment edits
-were left untouched. No GitHub push was performed.
+were left untouched. Subsequent GitHub publication merges the existing upstream
+motor-data/temperature-retirement work without replacing its data or approvals.
 
 ## Verification results
 
-- `.venv/bin/python -m unittest discover -s tests -q`: **188 passed** (18.092 s).
+- After merging the existing upstream motor-data update,
+  `.venv/bin/python -m unittest discover -s tests -q`: **201 passed** (24.151 s).
   Includes C controller/protocol tests with simulated MCU ticks through the
   full 30000 ms bound, duplicate requests, heartbeat lockout, simulated GPIO,
   successful supervised transport run, preflight with no control/heartbeat
   writes, request correlation failure with no START retry, rejected starts,
   stale samples, exact overcurrent/voltage trips, emergency stop and stop failure.
 - TypeScript/Vite production build: passed. ESLint: passed. Existing bundle-size
-  advisory remains (658.74 kB JavaScript, 195.17 kB gzip).
+  advisory remains (660.11 kB JavaScript, 195.77 kB gzip).
 - `make -C ADS -j4`: passed, output-disabled NUCLEO-F401RE target. ARM GCC
   14.3.rel1, text 29652 / data 92 / BSS 19532 bytes.
 - Source-only package preservation test: passed; no database, baseline,

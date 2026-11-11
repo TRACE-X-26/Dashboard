@@ -37,7 +37,6 @@ class SimulatedMultimeter:
             MeterChannel("circuit_current", "Circuit current", "INA219 #2", circuit_current, "A"),
             MeterChannel("probe_voltage", "Voltage probe", "Divider + ADC", probe_voltage, "V"),
             MeterChannel("resistance", "Calculated resistance", "V/I calculation", resistance, "Ω"),
-            MeterChannel("temperature", "Motor temperature", "DS18B20", motor.temperature, "°C"),
         )
         return {
             "timestamp": now,

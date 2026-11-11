@@ -99,7 +99,7 @@ class ApiTests(unittest.TestCase):
         channels = {item["channel"] for item in response.json()["channels"]}
         self.assertIn("motor_current", channels)
         self.assertIn("circuit_voltage", channels)
-        self.assertIn("temperature", channels)
+        self.assertNotIn("temperature", channels)
 
     def test_backend_owned_motor_sequence_can_be_cancelled(self) -> None:
         started = self.client.post("/api/motor/sequences/pwm-ramp").json()

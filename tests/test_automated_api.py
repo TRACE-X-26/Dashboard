@@ -14,7 +14,7 @@ class AutomatedApiTests(unittest.TestCase):
         self.context.__exit__(None,None,None);main.DATABASE_PATH=self.previous;self.temp.cleanup()
     def test_full_api_sequence_stream_results_and_export(self):
         registry=self.client.get('/api/automated/registry').json()
-        self.assertEqual(sum(p['available'] for p in registry),6)
+        self.assertEqual(sum(p['available'] for p in registry),11)
         response=self.client.post('/api/automated/runs',json={'run_all':True,'duration_ms':300})
         self.assertEqual(response.status_code,201,response.text)
         run=response.json()
