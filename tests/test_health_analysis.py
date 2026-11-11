@@ -42,3 +42,13 @@ class HealthAnalysisTests(unittest.TestCase):
         for sample in samples:
             sample['values']['temperature']=999
         self.assertEqual(analyze(samples,completed=True,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')['condition'],'HEALTHY')
+
+    def test_conflicting_values_for_one_acquisition_are_not_independent_evidence(self):
+        samples=self.samples()
+        import copy
+        conflict=copy.deepcopy(samples[0])
+        conflict['values']['current']=9
+        samples.append(conflict)
+        result=analyze(samples,completed=True,source='SIMULATION',baselines=self.baseline(),test_id='pwm_10')
+        self.assertIsNone(result['health_score'])
+        self.assertIn('Conflicting',result['findings'][0])

@@ -52,7 +52,7 @@ def load_hardware_profile(path):
     if profile.get('temperature_enabled', False) is not False:
         raise RunRejected('Temperature has been retired; set temperature_enabled to false')
     profile['temperature_enabled']=False
-    for k in ('max_current','min_voltage','max_voltage') + (('max_temperature',) if profile.get('temperature_enabled', True) else ()):
+    for k in ('max_current','min_voltage','max_voltage'):
         v=limits.get(k)
         if type(v) not in (int,float) or not math.isfinite(v) or v<=0:raise RunRejected('Validated positive physical limit required: '+k)
     if limits['min_voltage']>=limits['max_voltage']:raise RunRejected('Invalid voltage limits')
@@ -77,13 +77,16 @@ class AutomatedTestEngine:
         try:p=load_hardware_profile(self.hardware_profile_path)
         except (ValueError,OSError) as exc:
             return [{**item,'available':False,'unavailable_reason':str(exc)} for item in registry(mode)]
-        return registry(mode,p['fixed_pwm_percent'],True)
+        approved=p.get('additional_procedures_approved',[])
+        if not isinstance(approved,list):
+            approved=[]
+        return registry(mode,p['fixed_pwm_percent'],True,approved)
     def start(self,request):
         mode=request.get('mode','simulation')
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
         profile=load_hardware_profile(self.hardware_profile_path) if mode=='hardware' else {
-            'limits':{'max_current':10.,'max_temperature':80.,'min_voltage':9.,'max_voltage':15.},
-            'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
+            'limits':{'max_current':10.,'min_voltage':9.,'max_voltage':15.},
+            'temperature_enabled':False,'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
         if mode=='hardware' and request.get('device_id')!=profile['asset_id']:
             raise RunRejected('Requested motor does not match commissioned asset')
         if mode=='hardware' and profile.get('operating_mode','NORMAL')=='SUPERVISED_TEST' and request.get('supervised_confirmed') is not True:
@@ -92,14 +95,20 @@ class AutomatedTestEngine:
             raise RunRejected('Fresh operator authorization required for this sequence')
         eligible={p['id']:p for p in self.available(mode) if p['available']}
         tests=request.get('tests')
-        if request.get('run_all') is True:tests=list(eligible)
+        if request.get('run_all') is True:tests=[key for key,item in eligible.items() if not item['requires_setup']]
         if not isinstance(tests,list) or not tests or len(tests)>20 or len(set(tests))!=len(tests):
             raise RunRejected('Select a nonempty unique list of at most 20 procedures')
         for test in tests:
             if test not in eligible:raise RunRejected(f'Unavailable procedure {test}: see registry')
+            if REGISTRY[test].requires_setup and any(request.get(key) in (None,'','UNKNOWN') for key in ('load_id','condition')):
+                raise RunRejected('Record the operator-applied load ID and physical condition before this procedure')
+        if mode=='hardware' and profile.get('operating_mode')=='SUPERVISED_TEST' and len(tests)>1:
+            raise RunRejected('Supervised mode requires fresh authorization for each physical procedure')
         duration=request.get('duration_ms',30000)
         if type(duration) is not int or not 100<=duration<=min(30000,profile.get('max_duration_ms',30000)):
             raise RunRejected('Duration outside approved bounds (100–30000 ms)')
+        if any(REGISTRY[test].requires_setup for test in tests) and duration<5000:
+            raise RunRejected('This observation procedure needs at least five seconds, including a three-second settling window')
         if not self._mutex.acquire(blocking=False):raise RunRejected('Another sequence is active')
         try:
             self._cancel.clear();self._emergency.clear()
@@ -107,7 +116,9 @@ class AutomatedTestEngine:
                 device_id=request.get('device_id','MOTOR-001'),created_at=utcnow(),ended_at=None,
                 configuration={'tests':tests,'duration_ms':duration,'scenario':request.get('scenario','healthy'),
                     'operating_mode':profile.get('operating_mode','SIMULATION'),
-                    'supervised_confirmed':request.get('supervised_confirmed') is True},
+                    'supervised_confirmed':request.get('supervised_confirmed') is True,
+                    'load_id':request.get('load_id','UNKNOWN'),'condition':request.get('condition','UNKNOWN'),
+                    'attached_mass_g':request.get('attached_mass_g'),'fixture_notes':request.get('fixture_notes','')},
                 commissioning=profile,progress=0,active_test=None,steps=[],outcome=None,health_score=None,
                 algorithm_version='trace-x-matched-baseline-v1',stop_confirmed=False,report_reference=None)
             self.store.create(run)
@@ -188,10 +199,10 @@ class AutomatedTestEngine:
             self.store.sample(run['id'],raw,['INVALID_CHANNELS']);raise
         values={k:(v['value'] if v['valid'] else None) for k,v in channels.items()}
         temperature_enabled=False
-        required_channels=('voltage','current','power','rpm') + (('temperature',) if temperature_enabled else ())
+        required_channels=('voltage','current','power','rpm')
         if not all(channels[name]['valid'] for name in required_channels):quality.append('INVALID_SENSOR_DATA')
         if type(raw.get('electrical_sequence')) is not int:quality.append('INVALID_SENSOR_DATA')
-        if raw.get('voltage_current_calibrated') is not True or (temperature_enabled and raw.get('temperature_calibrated') is not True):
+        if raw.get('voltage_current_calibrated') is not True:
             quality.append('CALIBRATION_UNVERIFIED')
         if raw.get('encoder_calibrated') is not True:quality.append('RPM_UNCALIBRATED')
         # Completion/sample ages are MCU ticks, independent of host delivery time.
@@ -208,8 +219,8 @@ class AutomatedTestEngine:
             run['measured_pwm_percent']=None
         for name,item in channels.items():
             if name not in required_channels:continue
-            if ((received_tick-item['timestamp_ms'])&0xffffffff)>(3000 if name=='temperature' else 1500):quality.append('STALE_'+name.upper())
-        prefixes=('electrical','encoder') + (('temperature',) if temperature_enabled else ())
+            if ((received_tick-item['timestamp_ms'])&0xffffffff)>1500:quality.append('STALE_'+name.upper())
+        prefixes=('electrical','encoder')
         for prefix in prefixes:
             begin=raw.get(prefix+'_started_ms');end=raw.get(prefix+'_completed_ms')
             if type(begin) is not int or type(end) is not int:quality.append('MISSING_ACQUISITION_INTERVAL');continue
@@ -329,14 +340,27 @@ class AutomatedTestEngine:
                 if stop_event:
                     stopped=stop_event.timestamp_ms
                     for sample in step['samples']:
-                        if any(((sample['raw'][p+'_completed_ms']-stopped)&0xffffffff)<0x80000000 for p in (('electrical','encoder','temperature') if profile.get('temperature_enabled',True) else ('electrical','encoder'))):
+                        if any(((sample['raw'][p+'_completed_ms']-stopped)&0xffffffff)<0x80000000 for p in ('electrical','encoder')):
                             sample['quality'].append('AFTER_STOP_INTERVAL')
                             self.store.update_quality(sample['sample_id'],sample['quality'])
                 self._transition(run,'ANALYZING')
-                step['result']=analyze(step['samples'],completed=True,source=run['source'],baselines=profile.get('baselines'),test_id=identifier,context={
+                step['started_ms']=started
+                analysis_samples=step['samples']
+                if procedure.requires_setup and started is not None:
+                    analysis_samples=[sample for sample in step['samples'] if
+                        3000<=((sample['raw']['electrical_started_ms']-started)&0xffffffff)<=run['configuration']['duration_ms']]
+                step['result']=analyze(analysis_samples,completed=True,source=run['source'],baselines=profile.get('baselines'),test_id=identifier,context={
                     'device_id':run['device_id'],'calibration_id':profile['calibration_id'],
-                    'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD'},
+                    'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD',
+                    'load_id':run['configuration']['load_id'],'condition':run['configuration']['condition'],
+                    'attached_mass_g':run['configuration']['attached_mass_g'],
+                    'supply_range':[profile['limits']['min_voltage'],profile['limits']['max_voltage']],
+                    'duration_ms':run['configuration']['duration_ms'],'firmware_version':profile.get('firmware_version'),
+                    'sensor_configuration':'INA219-MOTOR-0x40-and-encoder',
+                    'procedure_version':'settled-fixed-duty-v1' if procedure.requires_setup else 'fixed-duty-v1'},
                     required_channels=('voltage','current','power','rpm'))
+                step['result']['analysis_window_ms']=[3000 if procedure.requires_setup else 0,run['configuration']['duration_ms']]
+                step['result']['capture_complete']=run['stop_confirmed']
                 # Raw records remain even when analysis excludes acquisition intervals.
                 self.store.event(run['id'],{'test_id':identifier,'analysis':step['result']})
                 connection.disconnect();connection=None

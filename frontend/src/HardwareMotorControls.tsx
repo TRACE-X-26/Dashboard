@@ -1,3 +1,4 @@
+import { captureRunConditions } from './runConditions'
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import INA219Readings from './INA219Readings'
@@ -52,12 +53,14 @@ export default function HardwareMotorControls() {
   async function start() {
     if (supervised && !supervisedConfirmed) return
     if (!window.confirm(`${supervised ? 'SUPERVISED TEST: remain present with the physical power cutoff accessible. PC8 feedback may not be installed. ' : ''}Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
+    const conditions = captureRunConditions()
+    if (!conditions) return
     const confirmation = supervised && supervisedConfirmed
     setSupervisedConfirmed(false)
     setPending(true); setError('')
     try {
       const next = await api.startAutomated({ mode: 'hardware', device_id: status?.asset_id,
-        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation })
+        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation, ...conditions })
       setRun(next)
     } catch (err) { setError(String(err)) }
     finally { setPending(false) }

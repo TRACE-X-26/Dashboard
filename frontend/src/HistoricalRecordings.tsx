@@ -96,9 +96,9 @@ export default function HistoricalRecordings() {
           <Line yAxisId="electrical" dataKey="voltage" name="Branch voltage (V)" stroke="#53c7f0" dot={{ r: 2 }}/><Line yAxisId="electrical" dataKey="current" name="Branch current (A)" stroke="#ffb24c" dot={{ r: 2 }}/><Line yAxisId="electrical" dataKey="recorded_power" name="Recorded branch power (W)" stroke="#6bcf85" dot={{ r: 2 }}/><Line yAxisId="speed" dataKey="rpm" name="Reported signed RPM" stroke="#9b87f5" dot={{ r: 2 }}/>
         </LineChart></ResponsiveContainer>
       </section>
-      <section className="panel"><h2>Data quality ({result.warnings.length} warnings)</h2>
+      <section className="panel"><h2>Data quality ({result.warnings.filter(w => !/temp/i.test(w.code)).length} warnings)</h2>
         <p>{[...new Set(result.warnings.filter(w => !/temp/i.test(w.code)).map(w => w.code))].join(' · ') || 'No parser warnings'}</p>
-        <div className="table-wrap"><table><thead><tr><th>CSV line</th><th>Timestamp</th><th>Phase</th><th>Warnings</th></tr></thead><tbody>{result.samples.slice(0, 100).map(s => <tr key={s.sequence}><td>{s.line}</td><td>{s.timestamp}</td><td>{s.phase}</td><td>{s.warnings.join(', ')}</td></tr>)}</tbody></table></div><p>Showing first 100 extracted rows. Full parsed results remain available through the API.</p>
+        <div className="table-wrap"><table><thead><tr><th>CSV line</th><th>Timestamp</th><th>Phase</th><th>Warnings</th></tr></thead><tbody>{result.samples.slice(0, 100).map(s => <tr key={s.sequence}><td>{s.line}</td><td>{s.timestamp}</td><td>{s.phase}</td><td>{s.warnings.filter(w => !/temp/i.test(w)).join(', ')}</td></tr>)}</tbody></table></div><p>Showing first 100 extracted rows. Full parsed results remain available through the API.</p>
       </section>
     </>}
   </>

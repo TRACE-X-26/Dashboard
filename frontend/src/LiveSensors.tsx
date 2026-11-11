@@ -60,7 +60,7 @@ export default function LiveSensors() {
       <p>Latest status observations · Encoder: {status('encoder_status', sample?.encoder_status)} · INA219: {status('ina219_status', sample?.ina219_status)}</p>
       {sample && <p>Source: {sample.source} · Last complete cycle: {new Date(sample.timestamp).toLocaleTimeString()} · {online ? `${sample.age_seconds.toFixed(2)} s old` : 'stream disconnected'} · Power: {sample.power_origin}</p>}
       {(!online || state?.stale) && <p role="status">Waiting for fresh hardware telemetry.</p>}
-      {!sample && !!state?.pending_motor_fields?.length && <p>Missing cycle fields: {state.pending_motor_fields.join(', ')}</p>}
+      {!sample && !!state?.pending_motor_fields?.length && <p>Missing cycle fields: {state.pending_motor_fields.filter(name => !/temp/i.test(name)).join(', ')}</p>}
       {state?.error && <p role="alert">{state.error}</p>}
       <p>Branch voltage/current/power are measured before the driver. Plain-text cycles are grouped within three seconds using unique fields; this is receive-time association, not proof of simultaneous acquisition. Sensor calibration and the encoder direction convention remain unverified.</p>
       <h2>Individual channel observations</h2><p>Partial readings below are separate from the complete-cycle tiles.</p>
@@ -68,7 +68,7 @@ export default function LiveSensors() {
         {Object.entries(state?.channels ?? {}).filter(([key]) => key !== 'temperature').map(([key, c]) => <tr key={key}><td>{key}</td><td>{c.value} {({ voltage: 'V', current: 'A', rpm: 'RPM', temperature: '°C', recorded_power: 'W', input_power: 'W' } as Record<string, string>)[key] ?? ''}</td><td>{online ? c.quality : 'DISCONNECTED'}</td><td>{online ? c.age_seconds.toFixed(2) : 'Unknown'}</td></tr>)}
       </tbody></table></div>
       {!Object.keys(state?.channels ?? {}).length && <p>No sensor values received.</p>}
-      <p>{state?.warnings.join(' · ')}</p>
+      <p>{state?.warnings.filter(warning => !/temp|ds18/i.test(warning)).join(' · ')}</p>
     </section>
     <section className="panel"><h2>Diagnostic readiness</h2><p>{state?.diagnosis.status ?? 'NO_DATA'}</p><p>{state?.diagnosis.reason ?? 'Connect the Pi receiver to begin checking measurement quality.'}</p>
       <p>Sensor availability and freshness can be checked now. Motor or circuit health requires the correct asset definition, verified measurement channels, and calibrated limits/baselines. No hardware health percentage is assigned.</p>

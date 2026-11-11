@@ -75,7 +75,7 @@ export default function PhysicalCircuit() {
         </details></>}
     </section>
     <section className="panel"><h2>Circuit sensor connection</h2><p>{!online ? 'Backend disconnected' : !telemetry?.enabled ? 'Serial receiver not configured' : !telemetry.connected ? 'STM32 disconnected' : 'Receiver connected · calibration unverified'}</p>
-      {online && telemetry?.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}
+      {online && telemetry?.warnings?.filter(w => !/temp|ds18/i.test(w)).map(warning => <p key={warning} role="status">{warning}</p>)}
       {telemetry?.error && <p role="alert">{telemetry.error}</p>}
       <div className="table-wrap"><table><thead><tr><th>Point</th><th>Channel</th><th>Reading</th><th>Quality</th><th>Age (s)</th></tr></thead><tbody>{telemetry?.circuit_channels?.filter(c => c.asset_id === (session?.asset.asset_id ?? selected)).map(c => <tr key={`${c.point_id}-${c.channel}`}><td>{c.point_id}</td><td>{c.channel}</td><td>{online && telemetry?.connected && c.quality !== 'STALE' ? c.value : 'Unavailable'} {c.channel === 'circuit_current' ? 'A' : c.channel === 'circuit_power' ? 'W' : 'V'}</td><td>{online ? c.quality : 'DISCONNECTED'}</td><td>{online ? c.age_seconds.toFixed(2) : 'Unknown'}</td></tr>)}</tbody></table></div>
       <p>Supply measurements and probe voltage are distinct channels. ADC divider conversion belongs in calibrated firmware; engineering-value telemetry is not scaled again.</p>

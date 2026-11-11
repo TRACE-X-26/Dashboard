@@ -68,3 +68,37 @@ class AutomatedEngineTests(unittest.TestCase):
         frame=encode_message(command_message(CommandName.GET_STATUS,1),checksum=True)
         self.assertEqual(decode_message(frame).sequence,1)
         with self.assertRaises(ProtocolError):decode_message(frame.replace(b'GET_STATUS',b'GET_FAULTS'))
+
+    def test_guided_load_requires_documented_setup_and_saves_condition(self):
+        with self.assertRaises(RunRejected):
+            self.engine.start({'tests':['load_response'],'duration_ms':5000})
+        with self.assertRaises(RunRejected):
+            self.engine.start({'tests':['load_response'],'duration_ms':300,
+                               'load_id':'fixture-85g','condition':'operator-positioned'})
+        self.engine.start({'tests':['load_response'],'duration_ms':5000,
+                           'load_id':'fixture-85g','condition':'operator-positioned','attached_mass_g':85})
+        result=self.wait()
+        self.assertEqual(result['state'],'COMPLETED',result.get('reason'))
+        self.assertEqual(result['configuration']['attached_mass_g'],85)
+        report=result['steps'][0]['result']
+        self.assertEqual(report['analysis_window_ms'],[3000,5000])
+        self.assertEqual(report['operating_context']['load_id'],'fixture-85g')
+
+    def test_supervised_sequences_require_separate_authorizations(self):
+        from unittest.mock import patch
+        profile=dict(asset_id='MOTOR-001',operating_mode='SUPERVISED_TEST',
+                     fixed_pwm_percent=50,max_duration_ms=30000)
+        with patch('diagnostic_platform.automated_engine.load_hardware_profile',return_value=profile):
+            with self.assertRaisesRegex(RunRejected,'fresh authorization for each'):
+                self.engine.start(dict(mode='hardware',device_id='MOTOR-001',tests=['idle','pwm_50'],
+                                       operator_authorized=True,supervised_confirmed=True))
+
+    def test_full_historical_catalog_and_approval_gates(self):
+        from diagnostic_platform.test_registry import experiment_catalog,registry
+        self.assertEqual([entry['test_number'] for entry in experiment_catalog()],list(range(1,14)))
+        physical={entry['id']:entry for entry in registry('hardware',50,True)}
+        self.assertFalse(physical['load_response']['available'])
+        self.assertFalse(physical['power_consumption']['available'])
+        self.assertFalse(physical['pwm_100']['available'])
+        approved={entry['id']:entry for entry in registry('hardware',50,True,['load_response'])}
+        self.assertTrue(approved['load_response']['available'])

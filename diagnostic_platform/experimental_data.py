@@ -83,6 +83,9 @@ def audit_archives(archives, output, database=None):
                                                if s[field] is not None and not s['duplicate']]),
                         'logged_running': stats([s[field] for s in parsed['samples']
                                                  if s[field] is not None and not s['duplicate'] and s['phase'] == 'RUNNING'])}
+                metadata['recorded_target_pwm_labels'] = sorted({
+                    row.get('target_pwm_percent') or row.get('target_pwm') or row.get('pwm_command_percent') or row.get('pwm_percent')
+                    for row in rows} - {None, ''})
                 run = dict(run_id=digest, test_number=test, sources=[provenance],
                            content_sha256=normalized, metadata=metadata,
                            source_rows=len(rows), canonical=parsed, features=features,
@@ -96,9 +99,9 @@ def audit_archives(archives, output, database=None):
                 # instantaneous power is never synthesized from adjacent serial lines.
                 replay[digest] = replay_csv(rows, test)
                 replay[digest]['source_paths'] = [entry.filename]
-                window = [s for s in parsed['samples'] if s['phase']=='RUNNING' and not s['duplicate']]
-                if not parsed['events']:
-                    window = [s for s in parsed['samples'] if not s['duplicate']]
+                has_start=any(event['event']=='MOTOR_START' for event in parsed['events'])
+                window = [s for s in parsed['samples'] if
+                          s['phase'] in (('RUNNING',) if has_start else ('BEFORE_START',)) and not s['duplicate']]
                 replay[digest]['metrics'] = {}
                 for field, channel in [('voltage','motor_voltage_V'), ('current','motor_current_A'),
                                        ('rpm','motor_rpm'), ('recorded_power','motor_power_W')]:
@@ -125,7 +128,7 @@ def audit_archives(archives, output, database=None):
     (output / 'canonical.json').write_text(json.dumps(result, indent=2, allow_nan=False))
     catalog = {key: dict(value, present_in_archive=bool(value['independent_capture_files']))
                for key, value in tests.items()}
-    readable_replay = {runs[key]['sources'][0]['path']: value for key,value in replay.items()}
+    readable_replay = {runs[key]['sources'][0]['path']+' ['+key[:12]+']': value for key,value in replay.items()}
     (output / 'archive_replay.json').write_text(json.dumps(dict(test_catalog=catalog, runs=readable_replay), indent=2, allow_nan=False))
     with (output / 'run_features.csv').open('w', newline='') as stream:
         columns = ['run_id', 'test', 'channel', 'phase', 'count', 'mean', 'median', 'min', 'max', 'std', 'mad', 'baseline_status']
@@ -136,8 +139,21 @@ def audit_archives(archives, output, database=None):
                 for phase, values in phases.items():
                     writer.writerow(dict(run_id=run['run_id'], test=run['test_number'], channel=channel,
                                          phase=phase, baseline_status=run['baseline_status'], **values))
-    return dict(csv_files=len(files), unique_runs=len(runs), duplicate_files=result['exact_duplicate_files'],
-                rejected_files=len(rejected), tests=tests)
+    references = [dict(run_id=run['run_id'],test_number=run['test_number'],
+                       status='PROVISIONAL_UNVERIFIED',context=run['metadata'],
+                       statistics=run['features'],independent_runs=1,
+                       approval_required=run['baseline_exclusion_reasons'],
+                       uncertainty='Single capture; repeated samples are correlated. No statistical prediction interval.')
+                  for run in runs.values() if run['canonical']['samples']]
+    (output / 'candidate_references.json').write_text(json.dumps(
+        dict(candidates=references,approved=[],policy=result['reference_policy']), indent=2,allow_nan=False))
+    (output / 'excluded_measurements.json').write_text(json.dumps(
+        [dict(run_id=run['run_id'],line=warning['line'],reason=warning['code'])
+         for run in runs.values() for warning in run['canonical']['warnings']],indent=2))
+    summary=dict(csv_files=len(files), unique_runs=len(runs), duplicate_files=result['exact_duplicate_files'],
+                 rejected_files=len(rejected), tests=tests)
+    (output / 'summary.json').write_text(json.dumps(summary,indent=2))
+    return summary
 
 
 def main():
