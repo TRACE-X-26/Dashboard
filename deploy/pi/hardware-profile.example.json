@@ -2,7 +2,7 @@
   "device_id": "STM32-ADS",
   "asset_id": "MOTOR-001",
   "serial_identity": "",
-  "firmware_version": "0.4.2-dual-ina219",
+  "firmware_version": "0.5.0-supervised-motor",
   "fixture_id": "",
   "evidence_id": "",
   "calibration_id": "",
@@ -16,9 +16,9 @@
   "fixed_pwm_percent": 50,
   "max_duration_ms": 30000,
   "limits": {
-    "min_voltage": null,
-    "max_voltage": null,
-    "max_current": null,
+    "min_voltage": 11.0,
+    "max_voltage": 13.0,
+    "max_current": 1.5,
     "max_temperature": null
   },
   "baselines": {},
@@ -42,5 +42,16 @@
     "active_level": 1,
     "inactive_level": 0,
     "reset_behavior_verified": false
+  },
+  "operating_mode": "NORMAL",
+  "power_feedback_installed": false,
+  "power_feedback_wiring_verified": false,
+  "protection_limits_verified": true,
+  "supervised_testing_approved": false,
+  "protection_limits_verification": {
+    "basis": "operator_confirmation",
+    "date": "2026-11-11",
+    "independently_verified_by_agent": false,
+    "note": "Operator reports verification of 1.5 A cutoff and 11.0-13.0 V supply window. Historical logs alone do not establish motor safety ratings."
   }
 }

@@ -1,5 +1,7 @@
 # Dashboard motor control — November 6, 2026
 
+November 9 operating-mode update: [normal PC8 feedback and explicit supervised testing](SUPERVISED_MOTOR_TESTING.md), firmware 0.5.0-supervised-motor. Earlier hashes and mode requirements below are historical.
+
 Latest sensor update: [dual INA219 0x40/0x41 integration and verification](DUAL_INA219_INTEGRATION.md), firmware 0.4.2-dual-ina219. Earlier firmware hashes and sizes below are historical.
 
 This update supersedes the motor configuration in FULL_AUTOMATED_INTEGRATION.md.

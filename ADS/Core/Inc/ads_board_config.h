@@ -1,5 +1,10 @@
 #ifndef ADS_BOARD_CONFIG_H
 #define ADS_BOARD_CONFIG_H
+#if defined(ADS_USE_OPERATOR_PROFILE) && ADS_USE_OPERATOR_PROFILE
+/* CubeIDE Debug/Release explicitly select the operator-confirmed profile.
+ * Makefile defaults omit this selector and remain output-disabled. */
+#include "../../bench/supervised.operator.h"
+#endif
 /* Confirmed wiring and dual INA219 addresses; provisional encoder scaling.
  * Essential unresolved output protection gates remain OFF.
  * Define overrides only in a separately reviewed, identified bench build. */
@@ -76,18 +81,50 @@
 #error "Circuit INA219 shunt must be positive"
 #endif
 #ifndef ADS_MOTOR_MIN_VOLTAGE_MV
-#define ADS_MOTOR_MIN_VOLTAGE_MV 0U
+#define ADS_MOTOR_MIN_VOLTAGE_MV 11000U
 #endif
 #ifndef ADS_MOTOR_MAX_VOLTAGE_MV
-#define ADS_MOTOR_MAX_VOLTAGE_MV 0U
+#define ADS_MOTOR_MAX_VOLTAGE_MV 13000U
 #endif
 #ifndef ADS_MOTOR_MAX_CURRENT_MA
-#define ADS_MOTOR_MAX_CURRENT_MA 0U
+#define ADS_MOTOR_MAX_CURRENT_MA 1500U
 #endif
 #ifndef ADS_MOTOR_MAX_TEMPERATURE_MC
 #define ADS_MOTOR_MAX_TEMPERATURE_MC 0
 #endif
-#define ADS_BOARD_ACCEPTED (ADS_PHYSICAL_OUTPUT_ENABLED && ADS_MOTOR_WIRING_VERIFIED && \
+/* Explicit operating mode: no automatic fallback from NORMAL to supervision. */
+#define ADS_MODE_NORMAL 0
+#define ADS_MODE_SUPERVISED_TEST 1
+#ifndef ADS_MOTOR_OPERATING_MODE
+#define ADS_MOTOR_OPERATING_MODE ADS_MODE_NORMAL
+#endif
+#ifndef ADS_SUPERVISED_TESTING_APPROVED
+#define ADS_SUPERVISED_TESTING_APPROVED 0
+#endif
+/* Operator confirmed 1.5 A / 11-13 V on 2026-11-11; not independently bench-verified here. */
+#ifndef ADS_PROTECTION_LIMITS_VERIFIED
+#define ADS_PROTECTION_LIMITS_VERIFIED 1
+#endif
+#ifndef ADS_POWER_FEEDBACK_INSTALLED
+#define ADS_POWER_FEEDBACK_INSTALLED 0
+#endif
+#ifndef ADS_POWER_FEEDBACK_WIRING_VERIFIED
+#define ADS_POWER_FEEDBACK_WIRING_VERIFIED 0
+#endif
+#if ADS_MOTOR_OPERATING_MODE != ADS_MODE_NORMAL && ADS_MOTOR_OPERATING_MODE != ADS_MODE_SUPERVISED_TEST
+#error "Invalid motor operating mode"
+#endif
+#if ADS_POWER_FEEDBACK_WIRING_VERIFIED && !ADS_POWER_FEEDBACK_INSTALLED
+#error "Feedback verification requires an installed feedback connection"
+#endif
+#if (ADS_SUPERVISED_TESTING_APPROVED != 0 && ADS_SUPERVISED_TESTING_APPROVED != 1) || \
+    (ADS_PROTECTION_LIMITS_VERIFIED != 0 && ADS_PROTECTION_LIMITS_VERIFIED != 1) || \
+    (ADS_POWER_FEEDBACK_INSTALLED != 0 && ADS_POWER_FEEDBACK_INSTALLED != 1) || \
+    (ADS_POWER_FEEDBACK_WIRING_VERIFIED != 0 && ADS_POWER_FEEDBACK_WIRING_VERIFIED != 1)
+#error "Mode acceptance and feedback flags must be boolean 0 or 1"
+#endif
+#define ADS_MODE_ACCEPTED (ADS_MOTOR_OPERATING_MODE == ADS_MODE_NORMAL || ADS_SUPERVISED_TESTING_APPROVED)
+#define ADS_BOARD_ACCEPTED (ADS_PHYSICAL_OUTPUT_ENABLED && ADS_MODE_ACCEPTED && ADS_PROTECTION_LIMITS_VERIFIED && ADS_MOTOR_WIRING_VERIFIED && \
  ADS_KILL_SWITCH_VERIFIED && ADS_COMM_LOSS_STOP_VERIFIED && ADS_MOTOR_RELAY_VERIFIED && \
  ADS_SENSOR_WIRING_VERIFIED && ADS_INA219_CALIBRATED && \
  (!ADS_TEMPERATURE_ENABLED || ADS_TEMPERATURE_CALIBRATED) && ADS_BENCH_PWM_PERCENT > 0 && ADS_BENCH_PWM_PERCENT <= 100 && \

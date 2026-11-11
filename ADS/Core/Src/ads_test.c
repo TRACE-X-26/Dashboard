@@ -9,7 +9,7 @@ static void shutdown(ADS_Test *t, uint32_t now, const char *reason, int lock)
     t->stopped_ms = now;
     t->stop_event_seq = ++t->event_seq;
   }
-  t->running = 0; t->armed = 0; t->applied_pwm = 0;
+  t->running = 0; t->armed = 0; t->applied_pwm = 0; t->supervised_confirmed=0;
   if (lock) t->locked = 1;
   t->state = t->locked ? "LOCKOUT" : "STOPPED";
   t->reason = reason;
@@ -45,6 +45,7 @@ void ADS_Test_Fault(ADS_Test *t, uint32_t now, const char *reason)
 int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pwm,
                      uint32_t duration, const char *direction, uint32_t now, const char **reason)
 {
+  uint8_t confirmation=t->operator_confirmation; t->operator_confirmation=0;
   ADS_Test_Poll(t, now);
   *reason = "NONE";
   if (!strcmp(command,"EMERGENCY_STOP")) {
@@ -65,10 +66,12 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
   if (!t->output_enabled) { *reason=t->disabled_reason; return 0; }
   if (!strcmp(command,"ARM_TEST")) {
     if (t->running) { *reason="RUNNING"; return 0; }
+    if (t->supervised_required && !confirmation) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
     if (!t->heartbeat_seen || (uint32_t)(now-t->last_heartbeat_ms)>=HEARTBEAT_MS ||
         t->heartbeat_generation == t->arm_generation) { *reason="FRESH_HEARTBEAT_REQUIRED"; return 0; }
     if (!t->ready || !t->ready(t->context)) { *reason="INTERLOCK_OR_SENSOR_FAULT"; return 0; }
     if (t->arm && !t->arm(t->context)) { *reason="REARM_INTERLOCK"; return 0; }
+    t->supervised_confirmed=t->supervised_required && confirmation;
     t->locked=0; t->armed=1; t->state="ARMED"; t->reason="NONE";
     t->arm_generation=t->heartbeat_generation;
     return 1;
@@ -84,6 +87,7 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
   if (!strcmp(command,"START_TEST")) {
     t->requested_pwm=pwm;
     if (t->locked || !t->armed || t->running) { *reason="ARM_REQUIRED_OR_RUNNING"; return 0; }
+    if (t->supervised_required && !t->supervised_confirmed) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
     if (pwm!=t->fixed_pwm) { *reason="PWM_OUT_OF_RANGE"; return 0; }
     if (!duration || duration>t->max_duration_ms) { *reason="DURATION_OUT_OF_RANGE"; return 0; }
     if (!direction || strcmp(direction,"FORWARD")) { *reason="FIXED_DIRECTION_ONLY"; return 0; }

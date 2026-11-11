@@ -21,10 +21,11 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
     def profile(self):
         profile=json.loads((ROOT/'deploy/pi/hardware-profile.example.json').read_text())
         for name in ('wiring_verified','relay_verified','interlock_verified','kill_switch_verified',
-                     'communication_stop_verified','calibration_verified','operator_enable'):
+                     'communication_stop_verified','calibration_verified','operator_enable','protection_limits_verified',
+                     'power_feedback_installed','power_feedback_wiring_verified'):
             profile[name]=True # Synthetic test input, never a real approval.
         profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
-        profile['limits'].update(min_voltage=9,max_voltage=15,max_current=1)
+        profile['limits'].update(min_voltage=9,max_voltage=15,max_current=1,max_temperature=None)
         return profile
     def write_profile(self,profile):
         p=Path(self.temp.name)/'profile.json';p.write_text(json.dumps(profile));return p
@@ -41,7 +42,8 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
         p=ROOT/'deploy/pi/hardware-profile.example.json'
         profile=json.loads(p.read_text())
         self.assertEqual(profile['motor']['operating_current_reference'],.5)
-        self.assertIsNone(profile['limits']['max_current'])
+        self.assertEqual(profile['limits']['max_current'],1.5)
+        self.assertTrue(profile['protection_limits_verified'])
         self.assertFalse(profile['encoder']['calibrated'])
         with self.assertRaises(RunRejected):load_hardware_profile(p)
     def test_provisional_rpm_and_disabled_temperature_are_usable_without_health_claim(self):

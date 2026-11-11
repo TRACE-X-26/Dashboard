@@ -1,5 +1,7 @@
 # Dual INA219 integration — November 6, 2026
 
+November 9 operating-mode update: [normal PC8 feedback and explicit supervised testing](SUPERVISED_MOTOR_TESTING.md), firmware 0.5.0-supervised-motor. Earlier hashes and mode requirements below are historical.
+
 Current firmware: `0.4.2-dual-ina219`. This extends the existing ADS project and
 ADS v1 framing; the older standalone main.c was not substituted. No board was
 flashed, connected for programming, or physically operated during this work.

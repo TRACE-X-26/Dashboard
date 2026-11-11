@@ -49,9 +49,11 @@
 void ADS_Motor_Init(void);
 int ADS_Motor_OutputEnabled(void);
 const char *ADS_Motor_BlockReason(void);
-/* Board must override with an ISR-safe, nonblocking physical interlock read.
- * No kill/enable feedback pin is documented, so the weak default rejects. */
+/* NORMAL mode uses only installed, verified PC8 active-HIGH feedback.
+ * Supervised readiness is separate and never changes this function to true. */
 int ADS_Motor_InterlocksReady(void);
+int ADS_Motor_OperationReady(void);
+int ADS_Motor_PowerFeedbackState(void);
 int ADS_Motor_Rearm(void);
 int ADS_Motor_StartPWM(uint32_t pwm, uint32_t duration_ms);
 /* Idempotent, nonblocking; callable before Init/from faults. Disables TIM2 CH3,

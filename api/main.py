@@ -618,6 +618,9 @@ def hardware_motor_status():
         reason=str(exc);ready=False
     active=engine.snapshot()
     return dict(profile_ready=ready,reason=reason,asset_id=profile.get('asset_id','MOTOR-001'),
+                operating_mode=profile.get('operating_mode','NORMAL'),
+                power_feedback_installed=profile.get('power_feedback_installed',False),
+                protection_limits_verified=profile.get('protection_limits_verified',False),
                 fixed_pwm_percent=profile.get('fixed_pwm_percent'),max_duration_ms=profile.get('max_duration_ms',30000),
                 active_run=active if active and active['mode']=='hardware' else None)
 

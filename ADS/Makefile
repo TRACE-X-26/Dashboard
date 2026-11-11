@@ -4,11 +4,18 @@ TOOLCHAIN ?= /Applications/STM32CubeIDE.app/Contents/Eclipse/plugins/com.st.stm3
 CC := $(if $(TOOLCHAIN),$(TOOLCHAIN)/,)arm-none-eabi-gcc
 SIZE := $(if $(TOOLCHAIN),$(TOOLCHAIN)/,)arm-none-eabi-size
 OUT ?= ../build/stm32-default-disabled
+BENCH_PROFILE ?=
 SOURCES := $(wildcard Core/Src/*.c) $(wildcard Drivers/STM32F4xx_HAL_Driver/Src/*.c)
 OBJECTS := $(patsubst %.c,$(OUT)/%.o,$(SOURCES)) $(OUT)/startup.o
 CPU := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 INCLUDES := -ICore/Inc -IDrivers/STM32F4xx_HAL_Driver/Inc -IDrivers/STM32F4xx_HAL_Driver/Inc/Legacy -IDrivers/CMSIS/Include -IDrivers/CMSIS/Device/ST/STM32F4xx/Include
 CFLAGS := $(CPU) -std=gnu11 -Og -g3 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -DSTM32F401xE -DUSE_HAL_DRIVER $(INCLUDES)
+ifneq ($(BENCH_PROFILE),)
+ifeq ($(abspath $(OUT)),$(abspath ../build/stm32-default-disabled))
+$(error A bench profile requires a separate OUT directory)
+endif
+CFLAGS += -include $(abspath $(BENCH_PROFILE))
+endif
 $(OUT)/Drivers/%.o: CFLAGS += -Wno-unused-parameter
 .PHONY: all
 all: $(OUT)/ADS.elf

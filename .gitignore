@@ -49,6 +49,7 @@ env/
 htmlcov/
 node_modules/
 ADS/.metadata/
+STM32CubeIDE-TraceX-Workspace/
 .vscode/
 .idea/
 *.log

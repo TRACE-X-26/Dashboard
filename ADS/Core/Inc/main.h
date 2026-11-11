@@ -79,6 +79,10 @@ void Error_Handler(void);
 #define MOTOR_RELAY_GPIO_Port GPIOB
 #define MOTOR_PWM_Pin GPIO_PIN_10
 #define MOTOR_PWM_GPIO_Port GPIOB
+/* Reserved proposed feedback: PC8 / CN10 pin 2, active HIGH, 3.3 V only.
+ * Not configured/read until installed AND wiring-verified. PB4/PB5 stay relays. */
+#define MOTOR_POWER_FEEDBACK_Pin GPIO_PIN_8
+#define MOTOR_POWER_FEEDBACK_GPIO_Port GPIOC
 #define MOTOR_DIRECTION_Pin GPIO_PIN_8
 #define MOTOR_DIRECTION_GPIO_Port GPIOA
 

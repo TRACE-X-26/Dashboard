@@ -28,8 +28,16 @@ def load_hardware_profile(path):
     if not path:raise RunRejected('Hardware disabled: no commissioning profile configured')
     profile=json.loads(Path(path).read_text())
     if not isinstance(profile,dict):raise RunRejected('Hardware profile must be a JSON object')
-    required=('wiring_verified','relay_verified','interlock_verified','kill_switch_verified',
-              'communication_stop_verified','calibration_verified','operator_enable')
+    mode=profile.get('operating_mode','NORMAL')
+    if mode not in ('NORMAL','SUPERVISED_TEST'):raise RunRejected('Unknown motor operating mode')
+    required=('wiring_verified','relay_verified','kill_switch_verified',
+              'communication_stop_verified','calibration_verified','operator_enable','protection_limits_verified')
+    if mode=='NORMAL':required+=('interlock_verified','power_feedback_installed','power_feedback_wiring_verified')
+    else:required+=('supervised_testing_approved',)
+    if type(profile.get('power_feedback_installed',False)) is not bool:
+        raise RunRejected('power_feedback_installed must be a boolean')
+    if profile.get('power_feedback_installed') is True and profile.get('power_feedback_wiring_verified') is not True:
+        raise RunRejected('Installed power feedback wiring requires verification')
     missing=[k for k in required if profile.get(k) is not True]
     if missing:raise RunRejected('Hardware blocked: '+', '.join(missing))
     if not all(profile.get(k) for k in ('evidence_id','calibration_id','firmware_version','asset_id','fixture_id')):
@@ -77,6 +85,8 @@ class AutomatedTestEngine:
             'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
         if mode=='hardware' and request.get('device_id')!=profile['asset_id']:
             raise RunRejected('Requested motor does not match commissioned asset')
+        if mode=='hardware' and profile.get('operating_mode','NORMAL')=='SUPERVISED_TEST' and request.get('supervised_confirmed') is not True:
+            raise RunRejected('Fresh supervised operator / physical cutoff confirmation required')
         if mode=='hardware' and request.get('operator_authorized') is not True:
             raise RunRejected('Fresh operator authorization required for this sequence')
         eligible={p['id']:p for p in self.available(mode) if p['available']}
@@ -94,7 +104,9 @@ class AutomatedTestEngine:
             self._cancel.clear();self._emergency.clear()
             run=dict(id=str(uuid4()),state='IDLE',mode=mode,source='SIMULATION' if mode=='simulation' else 'stm32_serial',
                 device_id=request.get('device_id','MOTOR-001'),created_at=utcnow(),ended_at=None,
-                configuration={'tests':tests,'duration_ms':duration,'scenario':request.get('scenario','healthy')},
+                configuration={'tests':tests,'duration_ms':duration,'scenario':request.get('scenario','healthy'),
+                    'operating_mode':profile.get('operating_mode','SIMULATION'),
+                    'supervised_confirmed':request.get('supervised_confirmed') is True},
                 commissioning=profile,progress=0,active_test=None,steps=[],outcome=None,health_score=None,
                 algorithm_version='trace-x-matched-baseline-v1',stop_confirmed=False,report_reference=None)
             self.store.create(run)
@@ -189,6 +201,9 @@ class AutomatedTestEngine:
             run['applied_pwm_percent']=status.get('applied_pwm_percent')
             run['device_state']=status.get('state')
             run['faults']=status.get('faults',[])
+            run['operating_mode']=status.get('operating_mode',run['commissioning'].get('operating_mode','SIMULATION'))
+            run['power_feedback_installed']=status.get('power_feedback_installed',False)
+            run['power_feedback_state']=status.get('power_feedback_state','NOT_REPORTED')
             run['measured_pwm_percent']=None
         for name,item in channels.items():
             if name not in required_channels:continue
@@ -203,7 +218,9 @@ class AutomatedTestEngine:
             quality.append('REPEATED_ACQUISITION')
         raw.update(requested_pwm_percent=status.get('requested_pwm_percent'),
             applied_pwm_percent=status.get('applied_pwm_percent'),motor_state=status.get('state'),
-            shutdown_reason=status.get('stop_reason'),stm32_status_timestamp_ms=received_tick)
+            shutdown_reason=status.get('stop_reason'),stm32_status_timestamp_ms=received_tick,
+            operating_mode=run.get('operating_mode'),power_feedback_state=run.get('power_feedback_state'),
+            power_feedback_installed=run.get('power_feedback_installed'))
         record={'values':values,'quality':sorted(set(quality)),'raw':raw,'procedure':procedure.id}
         record['sample_id']=self.store.sample(run['id'],raw,record['quality']);step['samples'].append(record)
         if values.get('voltage') is not None and values.get('current') is not None and not quality:
@@ -243,6 +260,15 @@ class AutomatedTestEngine:
                     if caps.get('device_id')!='STM32-ADS' or caps.get('firmware_version')!=profile['firmware_version']:
                         raise RunRejected('Firmware/device identity mismatch')
                     if caps.get('hardware_control') is not True:raise RunRejected('Firmware output blocked: '+caps.get('hardware_block_reason','CONTROL_DISABLED'))
+                    if caps.get('operating_mode','NORMAL')!=profile.get('operating_mode','NORMAL'):
+                        raise RunRejected('Firmware/Pi operating mode mismatch')
+                    if caps.get('protection_limits_verified') is not True:
+                        raise RunRejected('Firmware protection limits remain provisional / unverified')
+                    if caps.get('power_feedback_installed')!=profile.get('power_feedback_installed',False):
+                        raise RunRejected('Firmware/Pi power feedback installation mismatch')
+                    for key,wire in [('min_voltage','min_voltage_mv'),('max_voltage','max_voltage_mv'),('max_current','max_current_ma')]:
+                        if caps.get(wire)!=round(profile['limits'][key]*1000):
+                            raise RunRejected('Firmware/Pi protection limit mismatch: '+key)
                     if caps.get('temperature_enabled',True)!=profile.get('temperature_enabled',True):
                         raise RunRejected('Temperature configuration differs between firmware and Pi')
                     if caps.get('fixed_pwm_percent')!=profile['fixed_pwm_percent']:raise RunRejected('Approved duty mismatch')
@@ -260,7 +286,8 @@ class AutomatedTestEngine:
                         self._check_cancel();self._cancel.wait(.1)
                 self._transition(run,'ARMED');started=None;device_run_id=None
                 if procedure.pwm:
-                    self._command(connection,'ARM_TEST')
+                    arm_args={'supervised_confirmed':True} if profile.get('operating_mode')=='SUPERVISED_TEST' else None
+                    self._command(connection,'ARM_TEST',arm_args)
                     self._command(connection,'SET_PWM',{'pwm_percent':procedure.pwm})
                     response=self._command(connection,'START_TEST',dict(pwm_percent=procedure.pwm,duration_ms=run['configuration']['duration_ms'],direction='FORWARD'))
                     started=response['started_ms'];device_run_id=response['run_id']

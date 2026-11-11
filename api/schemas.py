@@ -102,3 +102,4 @@ class AutomatedRunPayload(BaseModel):
     duration_ms: int = Field(default=30000,ge=100,le=30000)
     scenario: Literal['healthy','overloaded','undervoltage','overheating','stalled','sensor_failure','communication_loss'] = 'healthy'
     operator_authorized: bool = False
+    supervised_confirmed: bool = Field(default=False,strict=True)

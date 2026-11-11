@@ -71,3 +71,11 @@ class AutomatedApiTests(unittest.TestCase):
         self.assertEqual(report['execution_state'],'COMPLETED')
         self.assertEqual(report['source'],'SIMULATION')
         self.assertEqual(self.client.get('/api/circuits/capabilities').json()['continuity']['status'],'UNSUPPORTED')
+
+    def test_supervised_operator_confirmation_must_be_a_boolean(self):
+        response=self.client.post('/api/automated/runs',json={'mode':'hardware','tests':['pwm_50'],
+            'operator_authorized':True,'supervised_confirmed':'true'})
+        self.assertEqual(response.status_code,422)
+        status=self.client.get('/api/motor/hardware/status').json()
+        self.assertEqual(status['operating_mode'],'NORMAL')
+        self.assertFalse(status['profile_ready'])

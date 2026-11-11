@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define ADS_DEVICE_ID "STM32-ADS"
-#define ADS_FIRMWARE_VERSION "0.4.2-dual-ina219"
+#define ADS_FIRMWARE_VERSION "0.5.0-supervised-motor"
 
 static uint32_t ADS_Protocol_Now(const ADS_Protocol *protocol)
 {
@@ -94,7 +94,7 @@ static const char *ADS_Protocol_FindValue(const char *json, const char *key)
       if (tokens[i].parent == 0 && tokens[i].kind == 'K' &&
           tokens[i].end - tokens[i].start == 9 && memcmp(tokens[i].start, "\"payload\"", 9) == 0)
         { parent = (int)i + 1; break; }
-  if (!strcmp(key, "\"pwm_percent\"") || !strcmp(key, "\"duration_ms\"") || !strcmp(key, "\"direction\"")) {
+  if (!strcmp(key, "\"pwm_percent\"") || !strcmp(key, "\"duration_ms\"") || !strcmp(key, "\"direction\"") || !strcmp(key, "\"supervised_confirmed\"")) {
     const char *args = ADS_Protocol_FindValue(json, "\"arguments\"");
     if (!args) return NULL;
     for (i=0; i<token_count; i++) if (tokens[i].start==args) { parent=(int)i; break; }
@@ -171,6 +171,14 @@ static void ADS_Protocol_SendError(ADS_Protocol *protocol, uint32_t reply_to,
 }
 
 
+static const char *ADS_Protocol_FeedbackState(ADS_Test *t)
+{
+  if(!t->power_feedback_installed) return "NOT_INSTALLED";
+  if(!t->power_feedback_verified || !t->feedback) return "UNVERIFIED";
+  int state=t->feedback(t->context);
+  return state==1?"HIGH":state==0?"LOW":"UNVERIFIED";
+}
+
 static void ADS_Protocol_MotorResult(ADS_Protocol *p, uint32_t reply, int accepted, const char *reason, const char *type)
 {
   char frame[1280];
@@ -180,12 +188,14 @@ static void ADS_Protocol_MotorResult(ADS_Protocol *p, uint32_t reply, int accept
     "\"payload\":{\"reply_to\":%lu,\"result\":{\"accepted\":%s,\"reason\":\"%s\",\"state\":\"%s\","
     "\"requested_pwm_percent\":%lu,\"applied_pwm_percent\":%lu,\"direction\":\"%s\",\"fixed_direction\":\"FORWARD\",\"faults\":%s,"
     "\"run_id\":%lu,\"started_ms\":%lu,\"stopped_ms\":%lu,\"duration_ms\":%lu,"
-    "\"last_control_seq\":%lu,\"stop_reason\":\"%s\",\"hardware_control\":%s,\"physical_stop_verified\":false}}}\n",
+    "\"last_control_seq\":%lu,\"stop_reason\":\"%s\",\"hardware_control\":%s,\"physical_stop_verified\":false,\"operating_mode\":\"%s\",\"power_feedback_installed\":%s,\"power_feedback_state\":\"%s\",\"supervised_confirmed\":%s}}}\n",
     type,(unsigned long)++p->transmit_sequence,(unsigned long)ADS_Protocol_Now(p),(unsigned long)reply,
     accepted?"true":"false",reason,t->state,(unsigned long)t->requested_pwm,(unsigned long)t->applied_pwm,
     t->output_enabled?"FORWARD":"UNCONFIGURED",t->locked?"[\"MOTOR_LOCKOUT\"]":"[]",
     (unsigned long)t->run_id,(unsigned long)t->started_ms,(unsigned long)t->stopped_ms,
-    (unsigned long)t->duration_ms,(unsigned long)t->last_control_seq,t->reason,t->output_enabled?"true":"false");
+    (unsigned long)t->duration_ms,(unsigned long)t->last_control_seq,t->reason,t->output_enabled?"true":"false",
+    t->supervised_required?"SUPERVISED_TEST":"NORMAL",t->power_feedback_installed?"true":"false",
+    ADS_Protocol_FeedbackState(t),t->supervised_confirmed?"true":"false");
   if(n>0 && (size_t)n<sizeof(frame)) ADS_Protocol_Transmit(p,frame);
 }
 void ADS_Protocol_SetMotorTest(ADS_Protocol *p, ADS_Test *t) { p->motor_test=t; }
@@ -250,7 +260,7 @@ static void ADS_Protocol_SendStatus(ADS_Protocol *protocol, uint32_t reply_to)
 static void ADS_Protocol_SendCapabilities(ADS_Protocol *protocol,
                                           uint32_t reply_to)
 {
-  char frame[1200];
+  char frame[1800];
   int written;
   if (protocol->motor_test) {
     ADS_Test *t=protocol->motor_test;
@@ -259,9 +269,12 @@ static void ADS_Protocol_SendCapabilities(ADS_Protocol *protocol,
       "\"payload\":{\"reply_to\":%lu,\"result\":{\"device_id\":\"STM32-ADS\",\"firmware_version\":\"%s\","
       "\"measurement_types\":[\"voltage\",\"current\",\"power\",\"temperature\",\"rpm\"],"
       "\"commands\":[\"GET_STATUS\",\"GET_CAPABILITIES\",\"GET_FAULTS\",\"READ_MEASUREMENTS\",\"ARM_TEST\",\"START_TEST\",\"SET_PWM\",\"STOP_TEST\",\"STOP_MOTOR\",\"EMERGENCY_STOP\",\"CLEAR_FAULTS\",\"GET_DEVICE_INFO\",\"GET_SENSOR_DATA\"],"
-      "\"ina219_addresses\":{\"MOTOR\":64,\"CIRCUIT\":65},\"integrity\":\"%s\",\"hardware_control\":%s,\"fixed_pwm_percent\":%lu,\"max_duration_ms\":%lu,\"fixed_direction\":\"FORWARD\",\"heartbeat_timeout_ms\":2000,\"temperature_enabled\":%s,\"hardware_block_reason\":\"%s\",\"encoder_calibration\":\"PROVISIONAL_UNTIL_BENCH_VERIFIED\"}}}\n",
+      "\"ina219_addresses\":{\"MOTOR\":64,\"CIRCUIT\":65},\"integrity\":\"%s\",\"hardware_control\":%s,\"fixed_pwm_percent\":%lu,\"max_duration_ms\":%lu,\"fixed_direction\":\"FORWARD\",\"heartbeat_timeout_ms\":2000,\"temperature_enabled\":%s,\"hardware_block_reason\":\"%s\",\"encoder_calibration\":\"PROVISIONAL_UNTIL_BENCH_VERIFIED\",\"operating_mode\":\"%s\",\"power_feedback_installed\":%s,\"power_feedback_state\":\"%s\",\"protection_limits_verified\":%s,\"min_voltage_mv\":%lu,\"max_voltage_mv\":%lu,\"max_current_ma\":%lu}}}\n",
       (unsigned long)++protocol->transmit_sequence,(unsigned long)ADS_Protocol_Now(protocol),(unsigned long)reply_to,
-      ADS_FIRMWARE_VERSION,protocol->require_crc?"CRC32":"OPTIONAL_CRC32",t->output_enabled?"true":"false",(unsigned long)t->fixed_pwm,(unsigned long)t->max_duration_ms,ADS_TEMPERATURE_ENABLED?"true":"false",t->disabled_reason);
+      ADS_FIRMWARE_VERSION,protocol->require_crc?"CRC32":"OPTIONAL_CRC32",t->output_enabled?"true":"false",(unsigned long)t->fixed_pwm,(unsigned long)t->max_duration_ms,ADS_TEMPERATURE_ENABLED?"true":"false",t->disabled_reason,
+      t->supervised_required?"SUPERVISED_TEST":"NORMAL",t->power_feedback_installed?"true":"false",
+      ADS_Protocol_FeedbackState(t),ADS_PROTECTION_LIMITS_VERIFIED?"true":"false",
+      (unsigned long)ADS_MOTOR_MIN_VOLTAGE_MV,(unsigned long)ADS_MOTOR_MAX_VOLTAGE_MV,(unsigned long)ADS_MOTOR_MAX_CURRENT_MA);
     if(written>0 && (size_t)written<sizeof(frame)) ADS_Protocol_Transmit(protocol,frame);
     return;
   }
@@ -527,6 +540,11 @@ static void ADS_Protocol_HandleFrame(ADS_Protocol *protocol, const char *frame)
       char direction[16]="";
       int accepted;
       int valid=1;
+      protocol->motor_test->operator_confirmation=0;
+      if(!strcmp(command,"ARM_TEST") || !strcmp(command,"CLEAR_FAULTS")) {
+        const char *confirmation=ADS_Protocol_FindValue(frame,"\"supervised_confirmed\"");
+        protocol->motor_test->operator_confirmation=confirmation && !strncmp(confirmation,"true",4);
+      }
       if(!strcmp(command,"START_TEST") || !strcmp(command,"SET_PWM"))
         valid=ADS_Protocol_ReadUint32(frame,"\"pwm_percent\"",&pwm);
       if(!strcmp(command,"START_TEST"))

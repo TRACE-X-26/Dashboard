@@ -1,5 +1,9 @@
 # Software-Defined Diagnostic Platform
 
+November 11 current build: [supervised motor-enabled firmware and matching Pi setup](docs/SUPERVISED_OPERATOR_BUILD.md). CubeIDE Debug/Release explicitly select the operator-confirmed profile (50% PWM, up to 30 seconds, 1.5 A cutoff, 11–13 V). The motor boots stopped; live checks and per-run authorization remain required. Hardware acceptance is operator-reported, not independently verified by the coding agent. The generic Makefile default and supervised example remain output-disabled. Earlier milestone and disabled-output descriptions below are historical.
+
+November 9 operating-mode update: [normal PC8 feedback and explicit supervised testing](docs/SUPERVISED_MOTOR_TESTING.md), firmware 0.5.0-supervised-motor. Earlier hashes and mode requirements below are historical.
+
 Latest sensor update: [dual INA219 0x40/0x41 integration and verification](docs/DUAL_INA219_INTEGRATION.md), firmware 0.4.2-dual-ina219. Earlier firmware hashes and sizes below are historical.
 
 November 6 motor-control update: [current configuration, flashing and Pi instructions](docs/DASHBOARD_MOTOR_CONTROL.md). This supersedes the earlier motor settings; temperature is optional, RPM is provisional, and unresolved physical protections still block starts.

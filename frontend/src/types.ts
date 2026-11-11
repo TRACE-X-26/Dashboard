@@ -216,6 +216,7 @@ export type CircuitTelemetry = {
 
 export type RegisteredTest = { id: string; name: string; available: boolean; unavailable_reason: string; pwm: number | null }
 export type AutomatedRun = {
+  operating_mode?: string; power_feedback_installed?: boolean; power_feedback_state?: string;
   device_state?: string; faults?: string[];
   id: string; state: string; mode: 'simulation' | 'hardware'; source: string; progress: number;
   active_test: string | null; reason?: string; condition?: Report['condition']; health_score: number | null;

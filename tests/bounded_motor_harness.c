@@ -117,6 +117,7 @@ int main(int argc,char **argv)
   if(argc==1) { scenarios(); return 0; }
   ADS_Test t; ADS_Protocol p;
   ADS_Test_Init(&t,10,1000,strcmp(argv[1],"disabled")!=0,ready,start,stop,NULL);
+  t.supervised_required=!strcmp(argv[1],"supervised");
   ADS_Protocol_Init(&p,transmit,tick,NULL); ADS_Protocol_SetMotorTest(&p,&t);
   if(!strcmp(argv[1],"crc")) p.require_crc=1;
   ADS_Acquisition_Init(&data);

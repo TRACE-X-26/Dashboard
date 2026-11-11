@@ -12,6 +12,9 @@ typedef struct {
   uint32_t event_seq, start_event_seq, stop_event_seq;
   uint32_t fixed_pwm, max_duration_ms;
   uint8_t output_enabled, heartbeat_seen, armed, running, locked, has_control_seq;
+  uint8_t supervised_required, operator_confirmation, supervised_confirmed;
+  uint8_t power_feedback_installed, power_feedback_verified;
+  ADS_TestReadyFn feedback;
   ADS_TestReadyFn ready, arm;
   ADS_TestStartFn start;
   ADS_TestStopFn stop;

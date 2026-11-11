@@ -108,8 +108,10 @@ static void ADS_ReceivePoll(void)
 static int ADS_TestReady(void *context)
 {
   (void)context;
-  return ADS_Motor_InterlocksReady() && ADS_Sensors_Ready();
+  return ADS_Motor_OperationReady() && ADS_Sensors_Ready();
 }
+static int ADS_TestFeedback(void *context)
+{ (void)context; return ADS_Motor_PowerFeedbackState(); }
 static int ADS_TestArm(void *context)
 {
   (void)context;
@@ -190,6 +192,10 @@ int main(void)
   ADS_Test_Init(&motor_test, ADS_BENCH_PWM_PERCENT, ADS_BENCH_MAX_DURATION_MS,
                 ADS_Motor_OutputEnabled(), ADS_TestReady, ADS_TestStart, ADS_StopMotor, NULL);
   motor_test.disabled_reason=ADS_Motor_BlockReason();
+  motor_test.supervised_required=ADS_MOTOR_OPERATING_MODE==ADS_MODE_SUPERVISED_TEST;
+  motor_test.power_feedback_installed=ADS_POWER_FEEDBACK_INSTALLED;
+  motor_test.power_feedback_verified=ADS_POWER_FEEDBACK_WIRING_VERIFIED;
+  motor_test.feedback=ADS_TestFeedback;
   motor_test.arm=ADS_TestArm;
   ADS_Protocol_SetHardwareCallbacks(&ads_protocol, ADS_Sensors_Acquire, ADS_StopMotor);
   ADS_Protocol_SetMeasurementInfo(&ads_protocol, ADS_Sensors_Info);

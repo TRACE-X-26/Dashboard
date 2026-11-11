@@ -262,13 +262,21 @@ function RunTest({ profiles, scenarios, onComplete, hardware, setHardware }: { p
   async function start() {
     if (scenario.startsWith('auto:') || scenario.startsWith('hardware:')) {
       const physical = scenario.startsWith('hardware:')
-      if (physical && !window.confirm('Arm and run the selected physical motor test with the commissioned settings?')) return
+      let supervisedConfirmed = false
+      if (physical) {
+        try {
+          const configuration = await api.hardwareMotorStatus()
+          const supervised = configuration.operating_mode === 'SUPERVISED_TEST'
+          if (!window.confirm(supervised ? 'SUPERVISED TEST: confirm you will remain present with an accessible physical emergency power cutoff. Power feedback may not be installed. Run the approved test?' : 'Arm and run the selected physical motor test with the commissioned settings?')) return
+          supervisedConfirmed = supervised
+        } catch (error) { setStatus(String(error)); return }
+      }
       const selection = scenario.split(':')[1]
       setRunning(true); setMeasurements([]); setReport(null); setProgress(0)
       try {
         const run = await api.startAutomated({ mode: physical ? 'hardware' : 'simulation', device_id: device,
           tests: selection === 'all' ? [] : [selection], run_all: selection === 'all', duration_ms: samples * 100,
-          operator_authorized: physical })
+          operator_authorized: physical, supervised_confirmed: supervisedConfirmed })
         setAutomated(run)
         const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/automated/${run.id}`)
         socketRef.current = socket

@@ -4,6 +4,7 @@ import INA219Readings from './INA219Readings'
 import type { AutomatedRun } from './types'
 
 type HardwareStatus = {
+  operating_mode: string; power_feedback_installed: boolean; protection_limits_verified: boolean;
   profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null;
   max_duration_ms: number; active_run: AutomatedRun | null;
 }
@@ -16,6 +17,7 @@ export default function HardwareMotorControls() {
   const [pwm, setPwm] = useState(50)
   const [duration, setDuration] = useState(30)
   const [pending, setPending] = useState(false)
+  const [supervisedConfirmed, setSupervisedConfirmed] = useState(false)
   const [error, setError] = useState('')
   const socketRef = useRef<WebSocket | null>(null)
   useEffect(() => {
@@ -46,12 +48,16 @@ export default function HardwareMotorControls() {
     return () => { socket.close(); socketRef.current = null }
   }, [runId])
   const active = !terminal(run)
+  const supervised = status?.operating_mode === 'SUPERVISED_TEST'
   async function start() {
-    if (!window.confirm(`Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
+    if (supervised && !supervisedConfirmed) return
+    if (!window.confirm(`${supervised ? 'SUPERVISED TEST: remain present with the physical power cutoff accessible. PC8 feedback may not be installed. ' : ''}Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
+    const confirmation = supervised && supervisedConfirmed
+    setSupervisedConfirmed(false)
     setPending(true); setError('')
     try {
       const next = await api.startAutomated({ mode: 'hardware', device_id: status?.asset_id,
-        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true })
+        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation })
       setRun(next)
     } catch (err) { setError(String(err)) }
     finally { setPending(false) }
@@ -65,13 +71,16 @@ export default function HardwareMotorControls() {
   return <section className="panel motor-controls">
     <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands · temperature disabled</p></div><span className="mode-chip">HARDWARE</span></div>
     <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity, protection and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
+    <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Protection limits: {status?.protection_limits_verified ? 'verified configuration' : 'PROVISIONAL / START BLOCKED'}</p>
+    {supervised && <label><input type="checkbox" checked={supervisedConfirmed} disabled={active || pending} onChange={e => setSupervisedConfirmed(e.target.checked)}/> I will supervise this test and have an operator-controlled physical emergency power cutoff accessible.</label>}
     <div className="control-bar">
       <label>PWM<select value={pwm} disabled={active || pending} onChange={e => setPwm(Number(e.target.value))}>{[10, 25, 50, 75, 100].map(p => <option key={p} value={p} disabled={!status?.profile_ready || p !== status.fixed_pwm_percent}>{p}%{p !== status?.fixed_pwm_percent ? ' · requires approval' : ''}</option>)}</select></label>
       <label>Duration (seconds)<input type="number" min="0.1" max={Math.min(30, (status?.max_duration_ms || 30000) / 1000)} step="0.1" value={duration} disabled={active || pending} onChange={e => setDuration(Number(e.target.value))}/></label>
-      <button className="primary" disabled={!status?.profile_ready || active || pending || pwm !== status.fixed_pwm_percent || !Number.isFinite(duration) || duration < 0.1 || duration * 1000 > status.max_duration_ms} onClick={start}>Start Motor</button>
+      <button className="primary" disabled={!status?.profile_ready || (supervised && !supervisedConfirmed) || active || pending || pwm !== status.fixed_pwm_percent || !Number.isFinite(duration) || duration < 0.1 || duration * 1000 > status.max_duration_ms} onClick={start}>Start Motor</button>
       <button className="secondary" disabled={!active} onClick={() => stop()}>Stop Motor</button>
       <button className="estop" disabled={!active} onClick={() => stop(true)}>EMERGENCY STOP</button>
     </div>
+    <p>STM32 operating mode: {run?.operating_mode ?? 'Not yet reported'} · Feedback state: {run?.power_feedback_state ?? 'Not yet reported'}</p>
     <div className="driver-state"><div><span>Motor command state</span><strong>{run?.device_state ?? 'UNKNOWN'}</strong></div><div><span>Requested PWM</span><strong>{run?.requested_pwm_percent == null ? '—' : `${run.requested_pwm_percent}%`}</strong></div><div><span>STM32-applied PWM</span><strong>{run?.applied_pwm_percent == null ? '—' : `${run.applied_pwm_percent}%`}</strong></div></div>
     <section className="metric-grid motor-metrics">
       <div className="metric"><span>Voltage</span><strong>{value(sample?.voltage)}<small> V</small></strong></div>
