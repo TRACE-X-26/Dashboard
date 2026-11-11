@@ -36,7 +36,7 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RunRejected,'max_current'):
             load_hardware_profile(self.write_profile(profile))
         profile['limits']['max_current']=1;profile['temperature_enabled']=True
-        with self.assertRaisesRegex(RunRejected,'max_temperature'):
+        with self.assertRaisesRegex(RunRejected,'Temperature has been retired'):
             load_hardware_profile(self.write_profile(profile))
     def test_template_does_not_claim_assumed_operating_current_is_a_protection_limit(self):
         p=ROOT/'deploy/pi/hardware-profile.example.json'
