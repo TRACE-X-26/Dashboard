@@ -15,13 +15,13 @@ from .health_analysis import analyze
 from .protocol import encode_message, ProtocolError
 from .stm32 import STM32SerialConnection, CommunicationTimeout
 from .test_registry import REGISTRY, registry
+from .hardware_runtime import HardwareRuntime, RunRejected
 
 TERMINAL={'COMPLETED','FAILED','CANCELLED','EMERGENCY_STOP','DISCONNECTED'}
 TRANSITIONS={
  'IDLE':{'PRECHECK'},'PRECHECK':{'ARMED'},'ARMED':{'RUNNING'},'RUNNING':{'STOPPING'},
  'STOPPING':{'ANALYZING'},'ANALYZING':{'PRECHECK','COMPLETED'},
 }
-class RunRejected(ValueError):pass
 class InterruptedRun(Exception):pass
 
 def load_hardware_profile(path):
@@ -58,7 +58,9 @@ def load_hardware_profile(path):
     return profile
 
 class AutomatedTestEngine:
-    def __init__(self,path,*,hardware_profile_path='',connection_factory=None,publish=None):
+    def __init__(self,path,*,hardware_profile_path='',connection_factory=None,publish=None,
+                 hardware_control_enabled=False, serial_baud=115200, serial_read_timeout=.25,
+                 serial_command_timeout=.35):
         import fcntl
         path=Path(path).resolve()
         self._owner_file=open(str(path)+'.automation.lock','a+')
@@ -67,19 +69,29 @@ class AutomatedTestEngine:
             self._owner_file.close();raise RuntimeError('Another backend owns automated testing')
         self.store=RunStore(path);self.hardware_profile_path=hardware_profile_path
         self.connection_factory=connection_factory;self.publish=publish
+        self.hardware_runtime=HardwareRuntime(enabled=hardware_control_enabled,baud=serial_baud,
+            read_timeout=serial_read_timeout,command_timeout=serial_command_timeout)
         self._mutex=threading.Lock();self._data_lock=threading.RLock();self._cancel=threading.Event()
         self._emergency=threading.Event();self._thread=None;self.current=None
     def recover(self):self.store.recover()
     def available(self,mode):
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
         if mode=='simulation':return registry(mode)
-        try:p=load_hardware_profile(self.hardware_profile_path)
+        try:
+            self.hardware_runtime.require_permission()
+            p=load_hardware_profile(self.hardware_profile_path)
         except (ValueError,OSError) as exc:
             return [{**item,'available':False,'unavailable_reason':str(exc)} for item in registry(mode)]
-        return registry(mode,p['fixed_pwm_percent'],True)
+        procedures=registry(mode,p['fixed_pwm_percent'],True)
+        preflight=self.hardware_runtime.snapshot()
+        if not preflight['ready']:
+            return [{**item,'available':False,'unavailable_reason':item.get('unavailable_reason') or preflight['reason']}
+                    for item in procedures]
+        return procedures
     def start(self,request):
         mode=request.get('mode','simulation')
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
+        if mode=='hardware':self.hardware_runtime.require_permission()
         profile=load_hardware_profile(self.hardware_profile_path) if mode=='hardware' else {
             'limits':{'max_current':10.,'max_temperature':80.,'min_voltage':9.,'max_voltage':15.},
             'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
@@ -89,7 +101,10 @@ class AutomatedTestEngine:
             raise RunRejected('Fresh supervised operator / physical cutoff confirmation required')
         if mode=='hardware' and request.get('operator_authorized') is not True:
             raise RunRejected('Fresh operator authorization required for this sequence')
-        eligible={p['id']:p for p in self.available(mode) if p['available']}
+        # An explicitly authorized API request can attempt fresh preflight even
+        # without a cached probe. No ARM is sent until in-thread checks pass.
+        procedures=registry(mode,profile['fixed_pwm_percent'],True) if mode=='hardware' else self.available(mode)
+        eligible={p['id']:p for p in procedures if p['available']}
         tests=request.get('tests')
         if request.get('run_all') is True:tests=list(eligible)
         if not isinstance(tests,list) or not tests or len(tests)>20 or len(set(tests))!=len(tests):
@@ -104,7 +119,7 @@ class AutomatedTestEngine:
             self._cancel.clear();self._emergency.clear()
             run=dict(id=str(uuid4()),state='IDLE',mode=mode,source='SIMULATION' if mode=='simulation' else 'stm32_serial',
                 device_id=request.get('device_id','MOTOR-001'),created_at=utcnow(),ended_at=None,
-                configuration={'tests':tests,'duration_ms':duration,'scenario':request.get('scenario','healthy'),
+                configuration={'tests':tests,'duration_ms':duration,'scenario':None if mode=='hardware' else request.get('scenario','healthy'),
                     'operating_mode':profile.get('operating_mode','SIMULATION'),
                     'supervised_confirmed':request.get('supervised_confirmed') is True},
                 commissioning=profile,progress=0,active_test=None,steps=[],outcome=None,health_score=None,
@@ -148,18 +163,46 @@ class AutomatedTestEngine:
                 if connection:connection.disconnect()
             finally:self._mutex.release()
 
+    def preflight(self):
+        """Explicit read-only probe; never ARM, heartbeat, PWM or STOP writes."""
+        if not self._mutex.acquire(blocking=False):
+            raise RunRejected('A test or sensor acquisition owns the serial port; retry when idle')
+        connection=None
+        report=dict(ready=False,reason='',firmware_hardware_control=None,source='stm32_serial',
+                    read_only=True,capabilities=None,status=None)
+        try:
+            profile=load_hardware_profile(self.hardware_profile_path)
+            connection=(self.connection_factory('hardware',REGISTRY[f"pwm_{profile['fixed_pwm_percent']}"],
+                        'healthy',profile) if self.connection_factory else self.hardware_runtime.connection(profile))
+            # A newly created injected transport must obey the same read-only
+            # rule, including disconnect (which otherwise sends STOP_MOTOR).
+            connection.allow_motor_control=False
+            connection.connect()
+            caps=self._read(connection,'GET_CAPABILITIES')
+            report.update(capabilities=caps,firmware_hardware_control=caps.get('hardware_control'))
+            status=self._read(connection,'GET_STATUS');report['status']=status
+            self.hardware_runtime.validate_contract(profile,caps,status,profile['max_duration_ms'])
+            raw=self._read(connection,'READ_MEASUREMENTS')
+            # Read a later MCU tick instead of comparing ticks with host time.
+            self._read(connection,'GET_STATUS')
+            self.hardware_runtime.validate_sensors(profile,raw,connection.last_timestamp_ms)
+            self.hardware_runtime.require_permission()
+            report.update(ready=True,reason='Read-only preflight passed; Start still requires fresh authorization and repeated checks')
+        except Exception as exc:
+            report['reason']=str(exc)
+        finally:
+            try:
+                if connection:connection.disconnect()
+            finally:self._mutex.release()
+        return self.hardware_runtime.remember(report)
+
     def _connection(self,mode,procedure,scenario,profile):
         if self.connection_factory:return self.connection_factory(mode,procedure,scenario,profile)
         if mode=='simulation':
             sim=STM32Simulator(procedure.pwm or 10,scenario)
             return STM32SerialConnection(port='SIMULATION',device_id=sim.device_id,allow_motor_control=True,
                 require_crc=True,command_timeout=.35,transport_factory=lambda *_:sim)
-        from serial.tools import list_ports
-        # Require one exact USB serial identity, not merely the first ttyACM device.
-        candidates=[p for p in list_ports.comports() if p.serial_number==profile['serial_identity']]
-        if len(candidates)!=1:raise ConnectionError('Validated STM32 USB identity absent or ambiguous')
-        return STM32SerialConnection(port=candidates[0].device,device_id='STM32-ADS',allow_motor_control=True,
-            require_crc=True,command_timeout=.35)
+        return self.hardware_runtime.connection(profile,control=True)
     def _read(self,connection,command):
         for attempt in range(2):
             try:return connection.execute(command)
@@ -242,6 +285,8 @@ class AutomatedTestEngine:
         if faults:
             run['confirmed_limit_faults']=faults
             raise RunRejected(','.join(faults))
+        if run['mode']=='hardware':
+            self.hardware_runtime.validate_sensors(run['commissioning'],raw,received_tick)
         return status
     def _run(self,run,profile):
         connection=None;completed=False
@@ -257,22 +302,7 @@ class AutomatedTestEngine:
                 run['firmware_version']=caps.get('firmware_version');run['device_capabilities']=caps
                 if caps.get('integrity')!='CRC32':raise RunRejected('CRC32-capable firmware required')
                 if run['mode']=='hardware':
-                    if caps.get('device_id')!='STM32-ADS' or caps.get('firmware_version')!=profile['firmware_version']:
-                        raise RunRejected('Firmware/device identity mismatch')
-                    if caps.get('hardware_control') is not True:raise RunRejected('Firmware output blocked: '+caps.get('hardware_block_reason','CONTROL_DISABLED'))
-                    if caps.get('operating_mode','NORMAL')!=profile.get('operating_mode','NORMAL'):
-                        raise RunRejected('Firmware/Pi operating mode mismatch')
-                    if caps.get('protection_limits_verified') is not True:
-                        raise RunRejected('Firmware protection limits remain provisional / unverified')
-                    if caps.get('power_feedback_installed')!=profile.get('power_feedback_installed',False):
-                        raise RunRejected('Firmware/Pi power feedback installation mismatch')
-                    for key,wire in [('min_voltage','min_voltage_mv'),('max_voltage','max_voltage_mv'),('max_current','max_current_ma')]:
-                        if caps.get(wire)!=round(profile['limits'][key]*1000):
-                            raise RunRejected('Firmware/Pi protection limit mismatch: '+key)
-                    if caps.get('temperature_enabled',True)!=profile.get('temperature_enabled',True):
-                        raise RunRejected('Temperature configuration differs between firmware and Pi')
-                    if caps.get('fixed_pwm_percent')!=profile['fixed_pwm_percent']:raise RunRejected('Approved duty mismatch')
-                    if caps.get('max_duration_ms',0)<run['configuration']['duration_ms']:raise RunRejected('Firmware run bound is lower than requested')
+                    self.hardware_runtime.validate_contract(profile,caps,status,run['configuration']['duration_ms'])
                 if status.get('applied_pwm_percent')!=0:raise RunRejected('Output not initially disabled')
                 connection.seed_sequence(status.get('last_control_seq',0))
                 # Sensors need their first acquisition after boot. Only read while
@@ -290,10 +320,15 @@ class AutomatedTestEngine:
                     self._command(connection,'ARM_TEST',arm_args)
                     self._command(connection,'SET_PWM',{'pwm_percent':procedure.pwm})
                     response=self._command(connection,'START_TEST',dict(pwm_percent=procedure.pwm,duration_ms=run['configuration']['duration_ms'],direction='FORWARD'))
+                    if (response.get('state')!='RUNNING' or response.get('applied_pwm_percent')!=procedure.pwm or
+                        response.get('requested_pwm_percent')!=procedure.pwm or type(response.get('started_ms')) is not int or
+                        type(response.get('run_id')) is not int):
+                        raise RunRejected('START_TEST acknowledgment did not confirm requested/applied PWM and running state')
                     started=response['started_ms'];device_run_id=response['run_id']
                     connection.heartbeat()
                     events=self._events(connection,run)
-                    if not any(e.payload.get('event')=='MOTOR_START' and e.payload.get('run_id')==device_run_id for e in events):
+                    if not any(e.payload.get('event')=='MOTOR_START' and e.payload.get('run_id')==device_run_id and
+                               e.timestamp_ms==started and e.payload.get('applied_pwm_percent')==procedure.pwm for e in events):
                         raise RunRejected('Confirmed start event missing')
                 self._transition(run,'RUNNING');deadline=time.monotonic()+run['configuration']['duration_ms']/1000
                 last_heartbeat=0.;step['samples']=[];stop_event=None
@@ -321,7 +356,7 @@ class AutomatedTestEngine:
                     events=self._events(connection,run)
                     stop_event=next((e for e in events if e.payload.get('event')=='MOTOR_STOP' and e.payload.get('run_id')==device_run_id),None)
                 response=self._command(connection,'STOP_TEST')
-                if response.get('applied_pwm_percent')!=0:raise RunRejected('Zero output not acknowledged')
+                if not self._stopped(response):raise RunRejected('Stopped state and zero output not acknowledged')
                 if procedure.pwm and (stop_event is None or stop_event.payload.get('reason')!='COMPLETED'):
                     raise RunRejected('Normal completion event missing')
                 run['stop_confirmed']=True
@@ -356,7 +391,7 @@ class AutomatedTestEngine:
                 try:
                     command='EMERGENCY_STOP' if self._emergency.is_set() else 'STOP_TEST'
                     result=self._command(connection,command)
-                    run['stop_confirmed']=result.get('applied_pwm_percent')==0
+                    run['stop_confirmed']=self._stopped(result)
                     if run['stop_confirmed']:
                         run['applied_pwm_percent']=0;run['device_state']=result.get('state','STOPPED')
                 except Exception as exc:run['stop_error']=str(exc);run['stop_confirmed']=False
@@ -383,3 +418,8 @@ class AutomatedTestEngine:
             finally:
                 try:self.store.release(run['id'])
                 finally:self._mutex.release()
+
+    @staticmethod
+    def _stopped(response):
+        return (response.get('accepted') is True and type(response.get('applied_pwm_percent')) is int and
+                response['applied_pwm_percent']==0 and response.get('state') in {'STOPPED','DISARMED','LOCKOUT'})

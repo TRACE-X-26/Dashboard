@@ -14,6 +14,25 @@ import deploy.pi.build_bundle as bundle
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_source_only_upgrade_excludes_existing_evidence_and_runtime_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.env.example').write_text('ADS_MODE=simulation\nADS_HARDWARE_CONTROL_ENABLED=false\n')
+            (root / '.env').write_text('PRIVATE=preserve')
+            (root / 'diagnostics.db').write_bytes(b'original database')
+            (root / 'archive.sqlite3').write_bytes(b'original SQLite archive')
+            (root / 'data').mkdir()
+            (root / 'data/baseline.json').write_text('{"validated":true}')
+            (root / 'run.csv').write_text('original recording')
+            (root / 'app.py').write_text('# new runtime')
+            before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            with patch.object(bundle, 'ROOT', root):
+                output = root / 'deliverables/update.zip'
+                bundle.build_bundle(output, source_only=True)
+            with ZipFile(output) as archive:
+                self.assertEqual(set(archive.namelist()), {'Trace-X/app.py', 'Trace-X/.env.example'})
+            self.assertTrue(all(p.read_bytes() == content for p, content in before.items()))
+
     def test_bundle_excludes_machine_dependencies_and_backs_up_wal_database(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

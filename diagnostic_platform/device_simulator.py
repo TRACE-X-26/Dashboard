@@ -49,8 +49,10 @@ class STM32Simulator:
         elif command in {'GET_CAPABILITIES','GET_DEVICE_INFO'}:
             kind='capabilities'; result=dict(device_id=self.device_id,firmware_version='sim-0.3.0-bounded',
                 hardware_control=True,integrity='CRC32',fixed_pwm_percent=self.pwm,max_duration_ms=30000,
+                fixed_direction='FORWARD',heartbeat_timeout_ms=2000,
                 measurement_types=['voltage','current','power','temperature','rpm'],
-                commands=['ARM_TEST','START_TEST','STOP_TEST','SET_PWM','CLEAR_FAULTS','EMERGENCY_STOP'],source='SIMULATION')
+                commands=['ARM_TEST','START_TEST','STOP_TEST','SET_PWM','CLEAR_FAULTS','EMERGENCY_STOP',
+                          'GET_STATUS','GET_CAPABILITIES','READ_MEASUREMENTS'],source='SIMULATION')
         elif command in {'GET_STATUS','GET_FAULTS'}: result=self.status();kind='status'
         elif command in {'STOP_TEST','STOP_MOTOR'}:
             self.stop('CANCELLED');result={'accepted':True,**self.status()}

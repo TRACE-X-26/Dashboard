@@ -87,8 +87,9 @@ class STM32SerialConnection:
     """Synchronous request/response adapter for the target STM32 protocol.
 
     ADS v1 framing with request correlation and timestamped firmware events.
-    Physical commands remain disabled by default; the dashboard runtime does
-    not enable this gate. Firmware also requires independent bench acceptance.
+    Physical commands remain disabled by default. The explicitly opted-in
+    automated runtime can authorize a connection for a bounded operator run;
+    read-only probes never enable this gate. Firmware has independent gates.
     """
 
     CONTROL_COMMANDS = {

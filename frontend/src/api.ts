@@ -16,7 +16,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   captureSimulatedCircuit: (id: string, index: number) => request<CircuitReport>(`/api/circuits/simulated-runs/${id}/capture?index=${index}`, { method: 'POST' }),
   testRegistry: (mode: string) => request<RegisteredTest[]>(`/api/automated/registry?mode=${mode}`),
-  hardwareMotorStatus: () => request<{ operating_mode: string; power_feedback_installed: boolean; protection_limits_verified: boolean; profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null; max_duration_ms: number; active_run: AutomatedRun | null }>('/api/motor/hardware/status'),
+  hardwareMotorStatus: () => request<{ operating_mode: string; power_feedback_installed: boolean; protection_limits_verified: boolean; profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null; max_duration_ms: number; active_run: AutomatedRun | null; hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null; preflight: { ready: boolean; reason: string; stale: boolean } }>('/api/motor/hardware/status'),
+  hardwareMotorPreflight: () => request<{ ready: boolean; reason: string }>('/api/motor/hardware/preflight', { method: 'POST' }),
   automatedRuns: () => request<AutomatedRun[]>('/api/automated/runs'),
   startAutomated: (configuration: object) => request<AutomatedRun>('/api/automated/runs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(configuration),

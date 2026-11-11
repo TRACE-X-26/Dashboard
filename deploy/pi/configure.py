@@ -26,7 +26,7 @@ def configure(project: Path, config: Path):
         directory.mkdir(parents=True, exist_ok=True)
     environment = runtime / 'runtime.env'
     if not environment.exists():
-        environment.write_text('ADS_MODE=simulation\nADS_SERVE_DASHBOARD=1\nADS_DATABASE_PATH=diagnostics.db\nADS_LIVE_SERIAL_PORT=\n')
+        environment.write_text('ADS_MODE=simulation\nADS_HARDWARE_CONTROL_ENABLED=false\nADS_SERVE_DASHBOARD=1\nADS_DATABASE_PATH=diagnostics.db\nADS_LIVE_SERIAL_PORT=\n')
     unit = f'''[Unit]
 Description=Trace-X local diagnostic dashboard
 

@@ -93,7 +93,7 @@ class PowerFeedbackTests(unittest.TestCase):
             profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
             path.write_text(json.dumps(profile));self.assertEqual(load_hardware_profile(path)['operating_mode'],'SUPERVISED_TEST')
             self.assertFalse(profile['interlock_verified']);self.assertFalse(profile['power_feedback_installed'])
-            engine=AutomatedTestEngine(Path(directory)/'runs.db',hardware_profile_path=path)
+            engine=AutomatedTestEngine(Path(directory)/'runs.db',hardware_profile_path=path,hardware_control_enabled=True)
             try:
                 with self.assertRaisesRegex(RunRejected,'Fresh supervised'):
                     engine.start({'mode':'hardware','device_id':'MOTOR-001','tests':['pwm_50'],'operator_authorized':True})
@@ -132,7 +132,7 @@ class SupervisedEngineTests(unittest.TestCase):
                     fixture=Fixture(firmware_mode);fixtures.append(fixture)
                     return STM32SerialConnection(port='IN_MEMORY_ONLY',device_id=fixture.device_id,
                         require_crc=True,allow_motor_control=True,transport_factory=lambda *_:fixture)
-                engine=AutomatedTestEngine(Path(directory)/'runs.db',hardware_profile_path=path,connection_factory=factory)
+                engine=AutomatedTestEngine(Path(directory)/'runs.db',hardware_profile_path=path,connection_factory=factory,hardware_control_enabled=True)
                 try:
                     run=engine.start({'mode':'hardware','device_id':'MOTOR-001','tests':['pwm_50'],
                         'duration_ms':300,'operator_authorized':True,'supervised_confirmed':True})

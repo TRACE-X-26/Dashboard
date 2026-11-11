@@ -128,7 +128,10 @@ async def lifespan(_: FastAPI):
         store.close()
     record_event("APPLICATION_STARTED", mode=settings.mode, hardware_control=False)
     automated_engine=AutomatedTestEngine(DATABASE_PATH,
-        hardware_profile_path=os.getenv('ADS_AUTOMATION_HARDWARE_PROFILE',''),
+        hardware_profile_path=settings.hardware_profile_path,
+        hardware_control_enabled=settings.hardware_control_enabled,
+        serial_baud=settings.serial_baud,serial_read_timeout=settings.serial_read_timeout,
+        serial_command_timeout=min(settings.serial_command_timeout,.5),
         publish=lambda raw,source: live_monitor.publish_acquisition(raw) if source=='stm32_serial' else None)
     automated_engine.recover()
     stm32_connection.connect()
@@ -170,8 +173,11 @@ def health() -> dict:
         "status": "ok",
         "mode": settings.mode,
         "database": DATABASE_PATH.name,
-        "hardware_control": False,
-        "measurement_source": settings.mode.upper(),
+        "hardware_control": automated_engine.hardware_runtime.snapshot()['ready'] if automated_engine else False,
+        "hardware_control_enabled": settings.hardware_control_enabled,
+        "hardware_preflight": automated_engine.hardware_runtime.snapshot() if automated_engine else None,
+        "measurement_source": "SIMULATION",
+        "legacy_control_source": "SIMULATION",
         "stm32_connection_source": "SIMULATION",
         "automated_test": automated_engine.snapshot() if automated_engine else None,
         "stm32_connected": stm32_connection.is_connected(),
@@ -247,7 +253,9 @@ def motor_status() -> dict:
     return {
         "state": serialize_control_state(state),
         "telemetry": telemetry.__dict__,
-        "mode": settings.mode,
+        "mode": "simulation",
+        "runtime_mode": settings.mode,
+        "source": "SIMULATION",
         "sequence": motor_sequence.status().__dict__,
     }
 
@@ -617,12 +625,22 @@ def hardware_motor_status():
     except (OSError,ValueError) as exc:
         reason=str(exc);ready=False
     active=engine.snapshot()
+    preflight=engine.hardware_runtime.snapshot()
     return dict(profile_ready=ready,reason=reason,asset_id=profile.get('asset_id','MOTOR-001'),
+                hardware_control_enabled=engine.hardware_runtime.enabled,
+                hardware_control=ready and preflight['ready'],
+                firmware_hardware_control=preflight.get('firmware_hardware_control'),
+                preflight=preflight,
                 operating_mode=profile.get('operating_mode','NORMAL'),
                 power_feedback_installed=profile.get('power_feedback_installed',False),
                 protection_limits_verified=profile.get('protection_limits_verified',False),
                 fixed_pwm_percent=profile.get('fixed_pwm_percent'),max_duration_ms=profile.get('max_duration_ms',30000),
                 active_run=active if active and active['mode']=='hardware' else None)
+
+@app.post('/api/motor/hardware/preflight')
+def hardware_motor_preflight():
+    try:return test_engine().preflight()
+    except RunRejected as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
 
 
 @app.get('/api/automated/registry')

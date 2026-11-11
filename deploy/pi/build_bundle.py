@@ -13,7 +13,9 @@ EXCLUDED = {'.git', '.venv', '.venv-pi', 'node_modules', '__pycache__', '.metada
             'Debug', 'Release', 'build', 'TraceX.app', '.pytest_cache', 'deliverables', '.agents', '.codex', '.aws'}
 
 
-def build_bundle(output: Path, recordings: Path | None = None):
+def build_bundle(output: Path, recordings: Path | None = None, *, source_only=False):
+    if source_only and recordings:
+        raise ValueError('A source-only update must not include recordings')
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temporary, ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         paths = []
@@ -22,6 +24,11 @@ def build_bundle(output: Path, recordings: Path | None = None):
             paths.extend(Path(parent) / filename for filename in sorted(files))
         for path in paths:
             relative = path.relative_to(ROOT)
+            if source_only and (set(relative.parts) & {'data', 'recordings', 'experiments', 'baselines',
+                                                        'STM32CubeIDE-TraceX-Workspace', '.settings'} or
+                                path.suffix in {'.csv', '.tsv', '.xlsx', '.sqlite', '.sqlite3'} or
+                                '.sqlite-' in path.name or '.sqlite3-' in path.name):
+                continue
             if not path.is_file() or path.is_symlink() or set(relative.parts) & EXCLUDED:
                 continue
             if path.resolve() == output.resolve() or path.name.startswith('.env') or path.name == '.DS_Store':
@@ -31,7 +38,7 @@ def build_bundle(output: Path, recordings: Path | None = None):
             archive.write(path, 'Trace-X/' + relative.as_posix())
         archive.write(ROOT / '.env.example', 'Trace-X/.env.example')
         database = ROOT / 'diagnostics.db'
-        if database.exists():
+        if database.exists() and not source_only:
             backup = Path(temporary) / 'diagnostics.db'
             source = sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)
             target = sqlite3.connect(backup)
@@ -53,5 +60,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=ROOT / 'deliverables/Trace-X-Pi.zip')
     parser.add_argument('--recordings', type=Path)
+    parser.add_argument('--source-only', action='store_true', help='Upgrade code/UI without shipping or overwriting databases, baselines or recordings')
     args = parser.parse_args()
-    print(json.dumps(build_bundle(args.output, args.recordings)))
+    print(json.dumps(build_bundle(args.output, args.recordings, source_only=args.source_only)))

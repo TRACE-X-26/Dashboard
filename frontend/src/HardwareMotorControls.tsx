@@ -7,6 +7,8 @@ type HardwareStatus = {
   operating_mode: string; power_feedback_installed: boolean; protection_limits_verified: boolean;
   profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null;
   max_duration_ms: number; active_run: AutomatedRun | null;
+  hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null;
+  preflight: { ready: boolean; reason: string; stale: boolean };
 }
 const terminal = (run: AutomatedRun | null) => !run || !!run.ended_at
 const value = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits)
@@ -49,6 +51,14 @@ export default function HardwareMotorControls() {
   }, [runId])
   const active = !terminal(run)
   const supervised = status?.operating_mode === 'SUPERVISED_TEST'
+  async function preflight() {
+    setPending(true); setError('')
+    try {
+      await api.hardwareMotorPreflight()
+      setStatus(await api.hardwareMotorStatus())
+    } catch (err) { setError(String(err)) }
+    finally { setPending(false) }
+  }
   async function start() {
     if (supervised && !supervisedConfirmed) return
     if (!window.confirm(`${supervised ? 'SUPERVISED TEST: remain present with the physical power cutoff accessible. PC8 feedback may not be installed. ' : ''}Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
@@ -72,11 +82,14 @@ export default function HardwareMotorControls() {
     <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands · temperature disabled</p></div><span className="mode-chip">HARDWARE</span></div>
     <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity, protection and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
     <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Protection limits: {status?.protection_limits_verified ? 'verified configuration' : 'PROVISIONAL / START BLOCKED'}</p>
+    <p>Hardware runtime: {status?.hardware_control_enabled ? 'explicitly enabled' : 'disabled'} · STM32 output permission: {status?.firmware_hardware_control == null ? 'not checked' : status.firmware_hardware_control ? 'reported enabled' : 'reported disabled'}</p>
+    <p role="status">{status?.preflight.reason ?? 'Hardware preflight not performed'}</p>
+    <button className="secondary" disabled={!status?.profile_ready || active || pending} onClick={preflight}>Check hardware · no motor commands</button>
     {supervised && <label><input type="checkbox" checked={supervisedConfirmed} disabled={active || pending} onChange={e => setSupervisedConfirmed(e.target.checked)}/> I will supervise this test and have an operator-controlled physical emergency power cutoff accessible.</label>}
     <div className="control-bar">
       <label>PWM<select value={pwm} disabled={active || pending} onChange={e => setPwm(Number(e.target.value))}>{[10, 25, 50, 75, 100].map(p => <option key={p} value={p} disabled={!status?.profile_ready || p !== status.fixed_pwm_percent}>{p}%{p !== status?.fixed_pwm_percent ? ' · requires approval' : ''}</option>)}</select></label>
       <label>Duration (seconds)<input type="number" min="0.1" max={Math.min(30, (status?.max_duration_ms || 30000) / 1000)} step="0.1" value={duration} disabled={active || pending} onChange={e => setDuration(Number(e.target.value))}/></label>
-      <button className="primary" disabled={!status?.profile_ready || (supervised && !supervisedConfirmed) || active || pending || pwm !== status.fixed_pwm_percent || !Number.isFinite(duration) || duration < 0.1 || duration * 1000 > status.max_duration_ms} onClick={start}>Start Motor</button>
+      <button className="primary" disabled={!status?.hardware_control || (supervised && !supervisedConfirmed) || active || pending || pwm !== status.fixed_pwm_percent || !Number.isFinite(duration) || duration < 0.1 || duration * 1000 > status.max_duration_ms} onClick={start}>Start Motor</button>
       <button className="secondary" disabled={!active} onClick={() => stop()}>Stop Motor</button>
       <button className="estop" disabled={!active} onClick={() => stop(true)}>EMERGENCY STOP</button>
     </div>
