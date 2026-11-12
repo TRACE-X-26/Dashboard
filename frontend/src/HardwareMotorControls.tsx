@@ -46,7 +46,7 @@ export default function HardwareMotorControls() {
         if (next.active_run) {
           setRun(next.active_run)
           activeRef.current = !next.active_run.ended_at
-        } else {
+        } else if (!activeRef.current) {
           activeRef.current = false
         }
       } catch {
@@ -174,8 +174,8 @@ export default function HardwareMotorControls() {
     </div>
     <div className="control-bar">
       <button className="primary" disabled={!ready || pwm == null || durationMs < 100} onClick={() => { void start() }}>START MOTOR</button>
-      <button className="danger" disabled={!active || pending} onClick={() => { void stop() }}>STOP MOTOR</button>
-      <button className="estop" disabled={!active || pending} onClick={() => { void stop(true) }}>EMERGENCY STOP</button>
+      <button className="danger" disabled={!active} onClick={() => { void stop() }}>STOP MOTOR</button>
+      <button className="estop" disabled={!active} onClick={() => { void stop(true) }}>EMERGENCY STOP</button>
     </div>
     {run && <p role="status">{run.state} · {run.stop_confirmed ? 'STM32 stop acknowledged' : 'Physical stop not independently verified'}</p>}
     {error && <p role="alert">{error}</p>}
