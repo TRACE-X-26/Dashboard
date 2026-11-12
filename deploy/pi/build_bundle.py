@@ -20,7 +20,7 @@ def build_bundle(output: Path, recordings: Path | None = None, *, source_only=Fa
     with tempfile.TemporaryDirectory() as temporary, ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         paths = []
         for parent, directories, files in os.walk(ROOT):
-            directories[:] = sorted(d for d in directories if d not in EXCLUDED and not (Path(parent) / d).is_symlink())
+            directories[:] = sorted(d for d in directories if d not in EXCLUDED and not (d.startswith('STM32CubeIDE-') and d.endswith('Workspace')) and not (Path(parent) / d).is_symlink())
             paths.extend(Path(parent) / filename for filename in sorted(files))
         for path in paths:
             relative = path.relative_to(ROOT)
@@ -30,6 +30,8 @@ def build_bundle(output: Path, recordings: Path | None = None, *, source_only=Fa
                                 '.sqlite-' in path.name or '.sqlite3-' in path.name):
                 continue
             if not path.is_file() or path.is_symlink() or set(relative.parts) & EXCLUDED:
+                continue
+            if path.name.endswith('.local.h'):
                 continue
             if path.resolve() == output.resolve() or path.name.startswith('.env') or path.name == '.DS_Store':
                 continue

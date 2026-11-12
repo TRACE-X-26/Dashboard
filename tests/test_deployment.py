@@ -24,6 +24,9 @@ class DeploymentTests(unittest.TestCase):
             (root / 'data').mkdir()
             (root / 'data/baseline.json').write_text('{"validated":true}')
             (root / 'run.csv').write_text('original recording')
+            (root / 'STM32CubeIDE-ActiveLow-Workspace').mkdir()
+            (root / 'STM32CubeIDE-ActiveLow-Workspace/old-main.c').write_text('old source')
+            (root / 'commissioned.local.h').write_text('private approval')
             (root / 'app.py').write_text('# new runtime')
             before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
             with patch.object(bundle, 'ROOT', root):

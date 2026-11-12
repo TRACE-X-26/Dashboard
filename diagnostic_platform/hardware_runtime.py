@@ -51,8 +51,17 @@ class HardwareRuntime:
             raise RunRejected('Firmware output blocked: ' + str(caps.get('hardware_block_reason', 'CONTROL_DISABLED')))
         if caps.get('operating_mode') != profile.get('operating_mode', 'NORMAL'):
             raise RunRejected('Firmware/Pi operating mode mismatch')
-        if profile.get('electrical_limits_enabled') is not False or caps.get('electrical_limits_enabled') is not False:
+        if profile.get('electrical_limits_enabled') is not True or caps.get('electrical_limits_enabled') is not True:
             raise RunRejected('Firmware/Pi electrical-limit policy mismatch')
+        if caps.get('protection_limits_verified') is not True:
+            raise RunRejected('Firmware protection limits unverified')
+        if caps.get('supply_sensing_verified') is not True or caps.get('supply_sensing')!='DOWNSTREAM_POWER_CHECK' or caps.get('power_check_required') is not True or caps.get('power_check_timeout_ms')!=1500 or caps.get('power_check_settle_ms')!=50:
+            raise RunRejected('Firmware downstream power-check contract mismatch')
+        for name,wire in [('min_voltage','min_voltage_mv'),('max_voltage','max_voltage_mv'),('max_current','max_current_ma')]:
+            if type(caps.get(wire)) is not int or caps[wire]!=round(profile['limits'][name]*1000):
+                raise RunRejected('Firmware/Pi protection limit mismatch: '+name)
+        if caps.get('motor_relay_active_level')!=0 or caps.get('circuit_relay_active_level')!=0:
+            raise RunRejected('Firmware COM-LOW relay polarity mismatch')
         if caps.get('power_feedback_installed') is not profile.get('power_feedback_installed', False):
             raise RunRejected('Firmware/Pi power feedback installation mismatch')
         if profile.get('power_feedback_installed') and status.get('power_feedback_state') != 'HIGH':
@@ -65,18 +74,20 @@ class HardwareRuntime:
             raise RunRejected('Firmware/Pi duration bound mismatch')
         if caps.get('fixed_direction') != 'FORWARD' or caps.get('heartbeat_timeout_ms') != 2000:
             raise RunRejected('Fixed direction or heartbeat shutdown capability mismatch')
-        required = {'ARM_TEST', 'SET_PWM', 'START_TEST', 'STOP_TEST', 'EMERGENCY_STOP',
+        required = {'PREPARE_TEST_POWER','ARM_TEST', 'SET_PWM', 'START_TEST', 'STOP_TEST', 'EMERGENCY_STOP',
                     'GET_STATUS', 'GET_CAPABILITIES', 'READ_MEASUREMENTS'}
         commands = caps.get('commands')
         if not isinstance(commands, list) or not required.issubset(commands):
             raise RunRejected('Required ADS motor commands are missing')
         if type(status.get('applied_pwm_percent')) is not int or status['applied_pwm_percent'] != 0 or status.get('state') not in {'DISARMED', 'STOPPED', 'LOCKOUT'}:
             raise RunRejected('Output not initially disabled / controller state unknown')
+        if status.get('power_check_required') is not True or status.get('motor_relay_requested_on') is not False:
+            raise RunRejected('Initial motor relay-off command state not confirmed')
         # LOCKOUT may be cleared only by the explicit, operator-authorized ARM
         # path; this read-only check never clears faults or renews a heartbeat.
 
     @staticmethod
-    def validate_sensors(profile, raw, tick):
+    def validate_sensors(profile, raw, tick, *, phase="running", powered_ms=None):
         channels = validate_measurements(raw)
         names = ['voltage', 'current', 'power', 'rpm']
         if profile.get('temperature_enabled', True):
@@ -98,6 +109,22 @@ class HardwareRuntime:
             begin, end = raw.get(prefix + '_started_ms'), raw.get(prefix + '_completed_ms')
             if type(begin) is not int or type(end) is not int or ((end - begin) & 0xffffffff) > 3000:
                 raise RunRejected('Invalid sensor acquisition interval: ' + prefix)
+        limits=profile['limits']
+        if abs(channels['current']['value'])>=limits['max_current']:
+            raise RunRejected('OVERCURRENT')
+        voltage=channels['voltage']['value']
+        if voltage<0 or voltage>limits['max_voltage']:raise RunRejected('SUPPLY_OUT_OF_RANGE')
+        if phase=='deenergized':
+            if voltage>=limits['min_voltage']:raise RunRejected('POWER_PRESENT_WHILE_STOPPED: check relay contacts or retained charge')
+            if channels['rpm']['value']!=0:raise RunRejected('Motor must be stationary before the power check')
+        elif phase=='checking':
+            if type(powered_ms) is not int:raise RunRejected('Power-check acquisition timestamp missing')
+            delta=(raw['electrical_started_ms']-powered_ms)&0xffffffff
+            if delta<50 or delta>=0x80000000:raise RunRejected('Power-check acquisition pending')
+            if voltage<limits['min_voltage']:raise RunRejected('SUPPLY_OUT_OF_RANGE: relay/load supply failed the power check')
+        elif phase=='running':
+            if voltage<limits['min_voltage']:raise RunRejected('SUPPLY_OUT_OF_RANGE')
+        else:raise RunRejected('Unknown electrical protection phase')
         return channels
 
     def remember(self, report):

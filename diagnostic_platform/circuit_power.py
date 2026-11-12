@@ -49,7 +49,7 @@ class CircuitPowerService:
     def start(self, duration, confirmed):
         from .automated_engine import load_hardware_profile
         self.engine.hardware_runtime.require_permission()
-        profile = load_hardware_profile(self.engine.hardware_profile_path)
+        profile = load_hardware_profile(self.engine.hardware_profile_path, require_motor_protection=False)
         if self.selected_branch != 'CIRCUIT':
             raise RunRejected('Select Circuit before applying circuit power')
         if profile.get('circuit_power_approved') is not True:
@@ -108,7 +108,7 @@ class CircuitPowerService:
                 not {'GET_CIRCUIT_STATUS','ARM_CIRCUIT','START_CIRCUIT','STOP_CIRCUIT'}.issubset(caps.get('commands', []))):
                 raise RunRejected('Circuit power unavailable: firmware identity/permission/capability mismatch; updated firmware required')
             motor = self.engine._read(connection, 'GET_STATUS')
-            if motor.get('applied_pwm_percent') != 0 or motor.get('state') in ('RUNNING', 'ARMED'):
+            if motor.get('applied_pwm_percent') != 0 or motor.get('state') not in ('STOPPED','DISARMED','LOCKOUT'):
                 raise RunRejected('Motor must be stopped before circuit power')
             status = self.engine._read(connection, 'GET_CIRCUIT_STATUS')
             if status.get('power_on') is not False:

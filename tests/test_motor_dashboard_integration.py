@@ -24,6 +24,7 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
                      'communication_stop_verified','calibration_verified','operator_enable','protection_limits_verified',
                      'power_feedback_installed','power_feedback_wiring_verified'):
             profile[name]=True # Synthetic test input, never a real approval.
+        profile['supply_sensing']['verified']=True
         profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
         return profile
     def write_profile(self,profile):
@@ -31,8 +32,8 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
     def test_temperature_remains_retired_and_electrical_cutoffs_are_not_required(self):
         profile=self.profile()
         loaded=load_hardware_profile(self.write_profile(profile))
-        self.assertFalse(loaded['temperature_enabled']);self.assertFalse(loaded['electrical_limits_enabled'])
-        self.assertNotIn('limits',loaded)
+        self.assertFalse(loaded['temperature_enabled']);self.assertTrue(loaded['electrical_limits_enabled'])
+        self.assertEqual(loaded['limits']['max_current'],1.5)
         profile['temperature_enabled']=True
         with self.assertRaisesRegex(RunRejected,'Temperature has been retired'):
             load_hardware_profile(self.write_profile(profile))
@@ -40,8 +41,8 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
         p=ROOT/'deploy/pi/hardware-profile.example.json'
         profile=json.loads(p.read_text())
         self.assertEqual(profile['motor']['operating_current_reference'],.5)
-        self.assertNotIn('limits',profile)
-        self.assertFalse(profile['electrical_limits_enabled'])
+        self.assertEqual(profile['limits']['max_current'],1.5)
+        self.assertTrue(profile['electrical_limits_enabled'])
         self.assertFalse(profile['encoder']['calibrated'])
         with self.assertRaises(RunRejected):load_hardware_profile(p)
     def test_provisional_rpm_and_disabled_temperature_are_usable_without_health_claim(self):

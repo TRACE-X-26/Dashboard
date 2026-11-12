@@ -3,9 +3,8 @@
 #include <stdint.h>
 #include "ads_board_config.h"
 
-/* User confirmed PB5 HIGH activation and LOW deactivation with 3.3V logic.
- * Reset behavior and other protection gates still require acceptance.
- * All motor commands remain disabled even if these board checks are approved. */
+/* Operator selected COM-LOW on S1: PB5 LOW energizes, HIGH releases.
+ * GPIO command levels are not relay contact or reset-time feedback. */
 #define ADS_RELAY_NO_COM_DESIGN_CONFIRMED 1
 #ifndef ADS_RELAY_POWER_PATH_VERIFIED
 #define ADS_RELAY_POWER_PATH_VERIFIED 1
@@ -17,7 +16,7 @@
 #define ADS_RELAY_SAFE_OUTPUT_VERIFIED 0
 #endif
 #ifndef ADS_RELAY_ACTIVE_LEVEL
-#define ADS_RELAY_ACTIVE_LEVEL 1
+#define ADS_RELAY_ACTIVE_LEVEL 0
 #endif
 #ifndef ADS_RELAY_INACTIVE_LEVEL
 #define ADS_RELAY_INACTIVE_LEVEL (ADS_RELAY_ACTIVE_LEVEL == -1 ? -1 : 1 - ADS_RELAY_ACTIVE_LEVEL)
@@ -46,6 +45,11 @@
     ADS_RELAY_POLARITY_VERIFIED && ADS_RELAY_SAFE_OUTPUT_VERIFIED)
 #define ADS_MOTOR_WATCHDOG_TIMEOUT_MS 2000U
 
+int ADS_Motor_ProtectionReady(void);
+int ADS_Motor_IdleReady(void);
+int ADS_Motor_PowerSampleState(uint32_t powered_ms);
+int ADS_Motor_PreparePower(void);
+int ADS_Motor_PowerState(void); /* 0 off, 1 checking, 2 ready, 3 running */
 void ADS_Motor_Init(void);
 int ADS_Motor_OutputEnabled(void);
 const char *ADS_Motor_BlockReason(void);

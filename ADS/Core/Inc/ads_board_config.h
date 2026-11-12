@@ -1,5 +1,8 @@
 #ifndef ADS_BOARD_CONFIG_H
 #define ADS_BOARD_CONFIG_H
+#if defined(ADS_USE_PROTECTED_PROFILE) && ADS_USE_PROTECTED_PROFILE
+#include "../../bench/protected.example.h"
+#endif
 #if defined(ADS_USE_OPERATOR_PROFILE) && ADS_USE_OPERATOR_PROFILE
 /* CubeIDE Debug/Release explicitly select the operator-confirmed profile.
  * Makefile defaults omit this selector and remain output-disabled. */
@@ -16,6 +19,14 @@
 #endif
 #ifndef ADS_CIRCUIT_RELAY_VERIFIED
 #define ADS_CIRCUIT_RELAY_VERIFIED 0
+#endif
+/* S2 COM-LOW matches the operator's current circuit relay jumper. */
+#ifndef ADS_CIRCUIT_RELAY_ACTIVE_LEVEL
+#define ADS_CIRCUIT_RELAY_ACTIVE_LEVEL 0
+#endif
+#define ADS_CIRCUIT_RELAY_INACTIVE_LEVEL (1 - ADS_CIRCUIT_RELAY_ACTIVE_LEVEL)
+#if ADS_CIRCUIT_RELAY_ACTIVE_LEVEL != 0 && ADS_CIRCUIT_RELAY_ACTIVE_LEVEL != 1
+#error "Circuit relay active level must be 0 or 1"
 #endif
 #ifndef ADS_MOTOR_WIRING_VERIFIED
 #define ADS_MOTOR_WIRING_VERIFIED 1
@@ -98,7 +109,25 @@
 #ifndef ADS_SUPERVISED_TESTING_APPROVED
 #define ADS_SUPERVISED_TESTING_APPROVED 0
 #endif
-/* Motor voltage/current are telemetry only: no software electrical cutoff. */
+/* Protected motor operation. These are limits, not proof of commissioning. */
+#define ADS_ELECTRICAL_LIMITS_ENABLED 1
+#ifndef ADS_MOTOR_MIN_VOLTAGE_MV
+#define ADS_MOTOR_MIN_VOLTAGE_MV 10000U
+#endif
+#ifndef ADS_MOTOR_MAX_VOLTAGE_MV
+#define ADS_MOTOR_MAX_VOLTAGE_MV 14000U
+#endif
+#ifndef ADS_MOTOR_MAX_CURRENT_MA
+#define ADS_MOTOR_MAX_CURRENT_MA 1500U
+#endif
+#ifndef ADS_PROTECTION_LIMITS_VERIFIED
+#define ADS_PROTECTION_LIMITS_VERIFIED 0
+#endif
+#define ADS_POWER_CHECK_TIMEOUT_MS 1500U
+#define ADS_POWER_CHECK_SETTLE_MS 50U
+#if ADS_MOTOR_MIN_VOLTAGE_MV == 0 || ADS_MOTOR_MAX_VOLTAGE_MV <= ADS_MOTOR_MIN_VOLTAGE_MV || ADS_MOTOR_MAX_CURRENT_MA == 0
+#error "Valid positive motor electrical protection limits required"
+#endif
 #ifndef ADS_POWER_FEEDBACK_INSTALLED
 #define ADS_POWER_FEEDBACK_INSTALLED 0
 #endif
@@ -117,7 +146,7 @@
 #error "Mode acceptance and feedback flags must be boolean 0 or 1"
 #endif
 #define ADS_MODE_ACCEPTED (ADS_MOTOR_OPERATING_MODE == ADS_MODE_NORMAL || ADS_SUPERVISED_TESTING_APPROVED)
-#define ADS_BOARD_ACCEPTED (ADS_PHYSICAL_OUTPUT_ENABLED && ADS_MODE_ACCEPTED && ADS_MOTOR_WIRING_VERIFIED && \
+#define ADS_BOARD_ACCEPTED (ADS_PHYSICAL_OUTPUT_ENABLED && ADS_MODE_ACCEPTED && ADS_PROTECTION_LIMITS_VERIFIED && ADS_MOTOR_WIRING_VERIFIED && \
  ADS_KILL_SWITCH_VERIFIED && ADS_COMM_LOSS_STOP_VERIFIED && ADS_MOTOR_RELAY_VERIFIED && \
  ADS_SENSOR_WIRING_VERIFIED && ADS_INA219_CALIBRATED && \
  (!ADS_TEMPERATURE_ENABLED || ADS_TEMPERATURE_CALIBRATED) && ADS_BENCH_PWM_PERCENT > 0 && ADS_BENCH_PWM_PERCENT <= 100 && \

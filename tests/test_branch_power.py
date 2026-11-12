@@ -71,6 +71,7 @@ class BranchPowerTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name);self.engines=[];self.peers=[]
         self.profile=json.loads((ROOT/'deploy/pi/supervised-operator-profile.json').read_text())
+        self.profile['protection_limits_verified']=True;self.profile['supply_sensing']['verified']=True
         self.profile['serial_identity']='IN_MEMORY_ONLY';self.path=self.root/'profile.json'
         self.path.write_text(json.dumps(self.profile))
 

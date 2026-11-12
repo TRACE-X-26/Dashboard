@@ -46,8 +46,8 @@ class SupervisedProtocolTests(unittest.TestCase):
     def test_capabilities_label_operator_verified_limits_and_no_feedback(self):
         cap=self.exchange([self.frame('GET_CAPABILITIES',1)],'supervised')[0].payload['result']
         self.assertEqual(cap['operating_mode'],'SUPERVISED_TEST')
-        self.assertFalse(cap['power_feedback_installed']);self.assertFalse(cap['electrical_limits_enabled'])
-        self.assertNotIn('min_voltage_mv',cap);self.assertNotIn('max_current_ma',cap)
+        self.assertFalse(cap['power_feedback_installed']);self.assertTrue(cap['electrical_limits_enabled'])
+        self.assertEqual(cap['min_voltage_mv'],10000);self.assertEqual(cap['max_current_ma'],1500)
 
 class PowerFeedbackTests(unittest.TestCase):
     def test_normal_and_supervised_pin_mapping_shutdown_and_unverified_gates(self):
@@ -90,6 +90,7 @@ class PowerFeedbackTests(unittest.TestCase):
             for key in ('wiring_verified','relay_verified','kill_switch_verified','communication_stop_verified',
                         'calibration_verified','operator_enable','protection_limits_verified','supervised_testing_approved'):
                 profile[key]=True # Test fixture only, not bench approval.
+            profile['supply_sensing']['verified']=True
             profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
             path.write_text(json.dumps(profile));self.assertEqual(load_hardware_profile(path)['operating_mode'],'SUPERVISED_TEST')
             self.assertFalse(profile['interlock_verified']);self.assertFalse(profile['power_feedback_installed'])
@@ -106,24 +107,22 @@ class SupervisedEngineTests(unittest.TestCase):
         from diagnostic_platform.device_simulator import STM32Simulator
         from diagnostic_platform.stm32 import STM32SerialConnection
         import time
-        class Fixture(STM32Simulator):
-            device_id='STM32-ADS' # In-memory protocol fixture, no physical IO.
-            def __init__(self,mode):super().__init__(50);self.fixture_mode=mode
-            def status(self):return {**super().status(),'operating_mode':self.fixture_mode,
-                'power_feedback_installed':False,'power_feedback_state':'NOT_INSTALLED'}
+        from tests.test_hardware_runtime import BenchFixture
+        class Fixture(BenchFixture):
+            def __init__(self,mode):super().__init__();self.fixture_mode=mode
             def emit(self,kind,payload,stamp=None):
-                if kind=='capabilities':payload['result'].update(firmware_version='0.5.2-electrical-telemetry',
-                    operating_mode=self.fixture_mode,power_feedback_installed=False,electrical_limits_enabled=False,temperature_enabled=False)
-                if kind=='measurement':
-                    payload['result']['measurements']['temperature'].update(value=None,valid=False)
-                    payload['result']['temperature_calibrated']=False
                 super().emit(kind,payload,stamp)
+                if kind=='capabilities' and self.fixture_mode=='NORMAL':
+                    from diagnostic_platform.protocol import decode_message,encode_message
+                    message=decode_message(self.responses.pop());message.payload['result']['operating_mode']='NORMAL'
+                    self.responses.append(encode_message(message,checksum=True))
         for firmware_mode in ('SUPERVISED_TEST','NORMAL'):
             with self.subTest(firmware_mode=firmware_mode),tempfile.TemporaryDirectory() as directory:
                 profile=json.loads((ROOT/'deploy/pi/supervised-hardware-profile.example.json').read_text())
                 for key in ('wiring_verified','relay_verified','kill_switch_verified','communication_stop_verified',
                             'calibration_verified','operator_enable','protection_limits_verified','supervised_testing_approved'):
                     profile[key]=True # Synthetic fixture approvals only.
+                profile['supply_sensing']['verified']=True
                 profile.update(evidence_id='FAKE',calibration_id='FAKE',fixture_id='FAKE',serial_identity='FAKE')
                 path=Path(directory)/'profile.json';path.write_text(json.dumps(profile))
                 fixtures=[]

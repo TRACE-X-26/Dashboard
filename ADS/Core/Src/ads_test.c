@@ -5,11 +5,12 @@ static void shutdown(ADS_Test *t, uint32_t now, const char *reason, int lock)
 {
   /* Every exit, including repeated cancellation, uses the same physical stop. */
   if (t->stop) t->stop(t->context);
+  if(t->power_requested) t->stopped_ms=now;
   if (t->running) {
     t->stopped_ms = now;
     t->stop_event_seq = ++t->event_seq;
   }
-  t->running = 0; t->armed = 0; t->applied_pwm = 0; t->supervised_confirmed=0;
+  t->running = 0; t->armed = 0; t->applied_pwm = 0; t->supervised_confirmed=0;t->power_requested=0;
   if (lock) t->locked = 1;
   t->state = t->locked ? "LOCKOUT" : "STOPPED";
   t->reason = reason;
@@ -34,6 +35,11 @@ void ADS_Test_Poll(ADS_Test *t, uint32_t now)
     shutdown(t, now, "COMPLETED", 0);
   else if ((t->running || t->armed) && (!t->ready || !t->ready(t->context)))
     shutdown(t, now, "INTERLOCK_OR_SENSOR_FAULT", 1);
+  if(t->armed && t->power_requested) {
+    int state=t->power_state?t->power_state(t->context):0;
+    if(state==2) t->state="POWER_READY";
+    else if(state!=1) shutdown(t,now,"POWER_CHECK_FAILED",1);
+  }
 }
 void ADS_Test_Heartbeat(ADS_Test *t, uint32_t now)
 {
@@ -65,7 +71,7 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
   if (!strcmp(command,"START_TEST") || !strcmp(command,"SET_PWM")) t->requested_pwm=pwm;
   if (!t->output_enabled) { *reason=t->disabled_reason; return 0; }
   if (!strcmp(command,"ARM_TEST")) {
-    if (t->running) { *reason="RUNNING"; return 0; }
+    if (t->running || t->power_requested) { *reason="RUNNING_OR_POWER_CHECK_ACTIVE"; return 0; }
     if (t->supervised_required && !confirmation) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
     if (!t->heartbeat_seen || (uint32_t)(now-t->last_heartbeat_ms)>=HEARTBEAT_MS ||
         t->heartbeat_generation == t->arm_generation) { *reason="FRESH_HEARTBEAT_REQUIRED"; return 0; }
@@ -75,6 +81,13 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
     t->locked=0; t->armed=1; t->state="ARMED"; t->reason="NONE";
     t->arm_generation=t->heartbeat_generation;
     return 1;
+  }
+  if (!strcmp(command,"PREPARE_TEST_POWER")) {
+    if(!t->power_required || !t->armed || t->running || t->locked || t->power_requested) { *reason="ARM_REQUIRED_OR_POWER_CHECK_ACTIVE";return 0; }
+    if(!t->prepare_power || !t->prepare_power(t->context)) {
+      shutdown(t,now,"POWER_CHECK_START_FAILED",1);*reason="POWER_CHECK_START_FAILED";return 0;
+    }
+    t->power_requested=1;t->power_started_ms=now;t->state="POWER_CHECK";return 1;
   }
   if (!strcmp(command,"SET_DIRECTION")) { *reason=t->running ? "DIRECTION_CHANGE_WHILE_ACTIVE" : "FIXED_DIRECTION_ONLY"; return 0; }
   if (!strcmp(command,"SET_PWM")) {
@@ -88,6 +101,7 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
     t->requested_pwm=pwm;
     if (t->locked || !t->armed || t->running) { *reason="ARM_REQUIRED_OR_RUNNING"; return 0; }
     if (t->supervised_required && !t->supervised_confirmed) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
+    if(t->power_required && (!t->power_requested || strcmp(t->state,"POWER_READY"))) { *reason="POWER_CHECK_REQUIRED";return 0; }
     if (pwm!=t->fixed_pwm) { *reason="PWM_OUT_OF_RANGE"; return 0; }
     if (!duration || duration>t->max_duration_ms) { *reason="DURATION_OUT_OF_RANGE"; return 0; }
     if (!direction || strcmp(direction,"FORWARD")) { *reason="FIXED_DIRECTION_ONLY"; return 0; }

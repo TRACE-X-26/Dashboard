@@ -1,3 +1,7 @@
+Current wiring-compatible implementation: [downstream sensor integration](docs/DOWNSTREAM_SENSOR_INTEGRATION.md), firmware 0.7.0. Start includes a bounded relay-on check at zero PWM before motor rotation is authorized.
+
+Current protected hardware integration: [deployment, flashing and outstanding bench checks](docs/PROTECTED_HARDWARE_INTEGRATION.md). Default outputs disabled; 10–14 V and 1.5 A protection restored.
+
 Current motor/circuit station and deployment: [branch-power update](docs/BRANCH_POWER_UPDATE.md). Firmware 0.5.2 treats voltage/current as telemetry, with no numeric motor cutoffs.
 
 # Software-Defined Diagnostic Platform

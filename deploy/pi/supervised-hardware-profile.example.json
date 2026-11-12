@@ -2,7 +2,7 @@
   "device_id": "STM32-ADS",
   "asset_id": "MOTOR-001",
   "serial_identity": "",
-  "firmware_version": "0.5.2-electrical-telemetry",
+  "firmware_version": "0.7.0-downstream-protected",
   "fixture_id": "",
   "evidence_id": "",
   "calibration_id": "",
@@ -33,8 +33,8 @@
   },
   "relay": {
     "pin": "PB5",
-    "active_level": 1,
-    "inactive_level": 0,
+    "active_level": 0,
+    "inactive_level": 1,
     "reset_behavior_verified": false
   },
   "operating_mode": "SUPERVISED_TEST",
@@ -42,5 +42,22 @@
   "power_feedback_wiring_verified": false,
   "supervised_testing_approved": false,
   "circuit_power_approved": false,
-  "electrical_limits_enabled": false
+  "electrical_limits_enabled": true,
+  "circuit_relay": {
+    "pin": "PB4",
+    "active_level": 0,
+    "inactive_level": 1,
+    "trigger_jumper": "COM-LOW"
+  },
+  "protection_limits_verified": false,
+  "supply_sensing": {
+    "location": "DOWNSTREAM_MOTOR_RELAY",
+    "verified": true,
+    "basis": "operator-reported placement after relay"
+  },
+  "limits": {
+    "min_voltage": 10.0,
+    "max_voltage": 14.0,
+    "max_current": 1.5
+  }
 }

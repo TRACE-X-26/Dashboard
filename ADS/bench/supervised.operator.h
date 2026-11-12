@@ -17,7 +17,7 @@
 #define ADS_COMM_LOSS_STOP_VERIFIED 1
 #undef ADS_INA219_CALIBRATED
 #define ADS_INA219_CALIBRATED 1
-/* Operator confirmed D5/PB4 -> IN2, HIGH on / LOW off, common cutoff.
+/* Operator confirmed D5/PB4 -> IN2, COM-LOW: LOW on / HIGH off, common cutoff.
  * Circuit power is a bounded manual supply operation, not an automatic
  * circuit diagnostic or a calibrated health assessment. */
 #define ADS_CIRCUIT_OUTPUT_ENABLED 1

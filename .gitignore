@@ -87,3 +87,7 @@ dist/
 
 # Runtime automated-test process ownership lock
 *.automation.lock
+
+# Local commissioning profiles and CubeIDE workspaces
+/ADS/bench/*.local.h
+/STM32CubeIDE-*-Workspace/

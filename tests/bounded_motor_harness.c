@@ -6,6 +6,10 @@
 static uint32_t now;
 static unsigned starts,stops;
 static int sensors_ok=1;
+static int fake_power;
+static uint32_t fake_power_started;
+static int prepare_power(void *ctx) { (void)ctx;fake_power=1;fake_power_started=now;return 1; }
+static int power_state(void *ctx) { (void)ctx;return now-fake_power_started>=1500U ? 0 : fake_power; }
 static ADS_Test *motor_branch, *circuit_branch;
 static int ready(void *ctx) {
   if(ctx==motor_branch && circuit_branch && (circuit_branch->armed || circuit_branch->running)) return 0;
@@ -122,6 +126,7 @@ int main(int argc,char **argv)
   if(argc==1) { scenarios(); return 0; }
   ADS_Test t,circuit; ADS_Protocol p;
   ADS_Test_Init(&t,10,1000,strcmp(argv[1],"disabled")!=0,ready,start,stop,NULL);
+  if(!strcmp(argv[1],"downstream")) { t.power_required=1;t.prepare_power=prepare_power;t.power_state=power_state; }
   t.supervised_required=!strcmp(argv[1],"supervised");
   ADS_Protocol_Init(&p,transmit,tick,NULL); ADS_Protocol_SetMotorTest(&p,&t);
   if(!strcmp(argv[1],"crc")) p.require_crc=1;
@@ -138,7 +143,8 @@ int main(int argc,char **argv)
   ADS_Protocol_SetHardwareCallbacks(&p,acquire,NULL);
   ADS_Protocol_SetMeasurementInfo(&p,info);
   int ch; while((ch=getchar())!=EOF) {
-    if(ch=='!') { sensors_ok=0; ADS_Protocol_Poll(&p); }
+    if(ch=='+') { fake_power=2;ADS_Protocol_Poll(&p); }
+    else if(ch=='!') { sensors_ok=0; ADS_Protocol_Poll(&p); }
     else if(ch=='@') { now+=1000; ADS_Protocol_Poll(&p); }
     else ADS_Protocol_ProcessByte(&p,(uint8_t)ch);
   }

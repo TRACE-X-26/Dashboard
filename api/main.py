@@ -675,6 +675,8 @@ def hardware_motor_status():
                 operating_mode=profile.get('operating_mode','NORMAL'),
                 power_feedback_installed=profile.get('power_feedback_installed',False),
                 electrical_limits_enabled=profile.get('electrical_limits_enabled'),
+                protection_limits_verified=profile.get('protection_limits_verified',False),
+                supply_sensing_verified=isinstance(profile.get('supply_sensing'),dict) and profile['supply_sensing'].get('verified') is True,
                 fixed_pwm_percent=profile.get('fixed_pwm_percent'),max_duration_ms=profile.get('max_duration_ms',30000),
                 active_run=active if active and active['mode']=='hardware' else None)
 

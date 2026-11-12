@@ -1,3 +1,9 @@
+> Current sensor placement is downstream of the relays. Use [DOWNSTREAM_SENSOR_INTEGRATION.md](DOWNSTREAM_SENSOR_INTEGRATION.md) and firmware 0.7.0. No upstream relocation is required for the bounded zero-PWM power-check sequence.
+
+> Superseded: use [PROTECTED_HARDWARE_INTEGRATION.md](PROTECTED_HARDWARE_INTEGRATION.md). Version 0.6.0 restores electrical protection and requires verified upstream sensing; default outputs are disabled.
+
+> Both jumpers are now COM–LOW. Use [ACTIVE_LOW_RELAY_UPDATE.md](ACTIVE_LOW_RELAY_UPDATE.md) and firmware 0.5.3. HIGH-trigger statements below describe the preceding build.
+
 # Motor/circuit selection and electrical telemetry update
 
 Current firmware identity: **0.5.2-electrical-telemetry**.

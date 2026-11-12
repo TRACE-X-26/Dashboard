@@ -2,6 +2,7 @@
 from __future__ import annotations
 import copy
 import json
+import math
 import os
 import threading
 import time
@@ -23,7 +24,7 @@ TRANSITIONS={
 }
 class InterruptedRun(Exception):pass
 
-def load_hardware_profile(path):
+def load_hardware_profile(path, *, require_motor_protection=True):
     if not path:raise RunRejected('Hardware disabled: no commissioning profile configured')
     profile=json.loads(Path(path).read_text())
     if not isinstance(profile,dict):raise RunRejected('Hardware profile must be a JSON object')
@@ -31,6 +32,8 @@ def load_hardware_profile(path):
     if mode not in ('NORMAL','SUPERVISED_TEST'):raise RunRejected('Unknown motor operating mode')
     required=('wiring_verified','relay_verified','kill_switch_verified',
               'communication_stop_verified','calibration_verified','operator_enable')
+    if require_motor_protection:
+        required+=('protection_limits_verified',)
     if mode=='NORMAL':required+=('interlock_verified','power_feedback_installed','power_feedback_wiring_verified')
     else:required+=('supervised_testing_approved',)
     if type(profile.get('power_feedback_installed',False)) is not bool:
@@ -50,8 +53,20 @@ def load_hardware_profile(path):
     if profile.get('temperature_enabled', False) is not False:
         raise RunRejected('Temperature has been retired; set temperature_enabled to false')
     profile['temperature_enabled']=False
-    if profile.get('electrical_limits_enabled') is not False:
-        raise RunRejected('Explicit electrical_limits_enabled=false profile required for this firmware')
+    if profile.get('electrical_limits_enabled') is not True:
+        raise RunRejected('Protected firmware requires electrical_limits_enabled=true')
+    sensing=profile.get('supply_sensing',{})
+    if not isinstance(sensing,dict) or sensing.get('location')!='DOWNSTREAM_MOTOR_RELAY':
+        raise RunRejected('Downstream motor sensing profile required for the bounded power check')
+    limits=profile.get('limits',{})
+    if not isinstance(limits,dict):raise RunRejected('Protection limits must be an object')
+    for name,expected in [('min_voltage',10.),('max_voltage',14.),('max_current',1.5)]:
+        value=limits.get(name)
+        if type(value) not in (int,float) or not math.isfinite(value) or value!=expected:
+            raise RunRejected('Required protected motor limit mismatch: '+name)
+    relay=profile.get('relay',{})
+    if not isinstance(relay,dict) or type(relay.get('active_level')) is not int or type(relay.get('inactive_level')) is not int or relay['active_level']!=0 or relay['inactive_level']!=1:
+        raise RunRejected('COM-LOW relay profile required: active=0 / inactive=1')
     return profile
 
 class AutomatedTestEngine:
@@ -203,9 +218,9 @@ class AutomatedTestEngine:
             raw=self._read(connection,'READ_MEASUREMENTS')
             # Read a later MCU tick instead of comparing ticks with host time.
             self._read(connection,'GET_STATUS')
-            self.hardware_runtime.validate_sensors(profile,raw,connection.last_timestamp_ms)
+            self.hardware_runtime.validate_sensors(profile,raw,connection.last_timestamp_ms,phase='deenergized')
             self.hardware_runtime.require_permission()
-            report.update(ready=True,reason='Read-only preflight passed; Start still requires fresh authorization and repeated checks')
+            report.update(ready=True,reason='Off-state sensor checks passed; Start performs the bounded relay-on voltage check at zero PWM before motor PWM is allowed')
         except Exception as exc:
             report['reason']=str(exc)
         finally:
@@ -237,7 +252,7 @@ class AutomatedTestEngine:
         events=connection.drain_events()
         for event in events:self.store.event(run['id'],{**event.to_dict(),'test_id':run['active_test']})
         return events
-    def _measure(self,connection,run,procedure,step,started):
+    def _measure(self,connection,run,procedure,step,started, *, electrical_phase=None, powered_ms=None):
         raw=self._read(connection,'READ_MEASUREMENTS')
         from .ina219 import normalize_branches
         branches=normalize_branches(raw)
@@ -266,6 +281,7 @@ class AutomatedTestEngine:
             run['power_feedback_installed']=status.get('power_feedback_installed',False)
             run['power_feedback_state']=status.get('power_feedback_state','NOT_REPORTED')
             run['measured_pwm_percent']=None
+            run['motor_relay_requested_on']=status.get('motor_relay_requested_on')
         for name,item in channels.items():
             if name not in required_channels:continue
             if ((received_tick-item['timestamp_ms'])&0xffffffff)>1500:quality.append('STALE_'+name.upper())
@@ -304,7 +320,8 @@ class AutomatedTestEngine:
             run['confirmed_limit_faults']=faults
             raise RunRejected(','.join(faults))
         if run['mode']=='hardware':
-            self.hardware_runtime.validate_sensors(run['commissioning'],raw,received_tick)
+            self.hardware_runtime.validate_sensors(run['commissioning'],raw,received_tick,
+                phase=electrical_phase or ('deenergized' if started is None else 'running'), powered_ms=powered_ms)
         return status
     def _run(self,run,profile):
         connection=None;completed=False
@@ -336,12 +353,30 @@ class AutomatedTestEngine:
                 if procedure.pwm:
                     arm_args={'supervised_confirmed':True} if profile.get('operating_mode')=='SUPERVISED_TEST' else None
                     self._command(connection,'ARM_TEST',arm_args)
+                    if run['mode']=='hardware':
+                        power=self._command(connection,'PREPARE_TEST_POWER')
+                        if power.get('state')!='POWER_CHECK' or power.get('applied_pwm_percent')!=0 or power.get('motor_relay_requested_on') is not True or type(power.get('power_started_ms')) is not int:
+                            raise RunRejected('Power-check acknowledgment did not confirm relay request and zero PWM')
+                        self.store.event(run['id'],{'event':'POWER_CHECK','power_started_ms':power['power_started_ms'],'applied_pwm_percent':0})
+                        power_deadline=time.monotonic()+1.5
+                        while True:
+                            self._check_cancel();connection.heartbeat()
+                            try:
+                                checked=self._measure(connection,run,procedure,step,None,electrical_phase='checking',powered_ms=power['power_started_ms'])
+                                if checked.get('state')=='POWER_READY' and checked.get('applied_pwm_percent')==0:break
+                                if checked.get('state') not in ('POWER_CHECK','POWER_READY'):raise RunRejected('STM32 power check failed: '+str(checked.get('stop_reason')))
+                            except RunRejected as exc:
+                                if str(exc)!='Power-check acquisition pending':raise
+                            if time.monotonic()>=power_deadline:raise RunRejected('Power-check timeout; motor PWM never authorized')
+                            self._cancel.wait(.05)
                     self._command(connection,'SET_PWM',{'pwm_percent':procedure.pwm})
                     response=self._command(connection,'START_TEST',dict(pwm_percent=procedure.pwm,duration_ms=run['configuration']['duration_ms'],direction='FORWARD'))
                     if (response.get('state')!='RUNNING' or response.get('applied_pwm_percent')!=procedure.pwm or
                         response.get('requested_pwm_percent')!=procedure.pwm or type(response.get('started_ms')) is not int or
                         type(response.get('run_id')) is not int):
                         raise RunRejected('START_TEST acknowledgment did not confirm requested/applied PWM and running state')
+                    if run['mode']=='hardware' and (response.get('power_check_required') is not True or response.get('motor_relay_requested_on') is not True):
+                        raise RunRejected('START_TEST did not confirm protected motor relay request')
                     started=response['started_ms'];device_run_id=response['run_id']
                     connection.heartbeat()
                     events=self._events(connection,run)
@@ -396,7 +431,7 @@ class AutomatedTestEngine:
                     'fixture_id':profile.get('fixture_id'),'pwm_percent':procedure.pwm,'direction':'FORWARD',
                     'load_id':run['configuration']['load_id'],'condition':run['configuration']['condition'],
                     'attached_mass_g':run['configuration']['attached_mass_g'],
-                    'supply_range':([profile['limits']['min_voltage'],profile['limits']['max_voltage']] if run['mode']=='simulation' else None),
+                    'supply_range':[profile['limits']['min_voltage'],profile['limits']['max_voltage']],
                     'duration_ms':run['configuration']['duration_ms'],'firmware_version':profile.get('firmware_version'),
                     'sensor_configuration':'INA219-MOTOR-0x40-and-encoder',
                     'procedure_version':'settled-fixed-duty-v1' if procedure.requires_setup else 'fixed-duty-v1'},
@@ -454,4 +489,4 @@ class AutomatedTestEngine:
     @staticmethod
     def _stopped(response):
         return (response.get('accepted') is True and type(response.get('applied_pwm_percent')) is int and
-                response['applied_pwm_percent']==0 and response.get('state') in {'STOPPED','DISARMED','LOCKOUT'})
+                response['applied_pwm_percent']==0 and (response.get('power_check_required') is not True or response.get('motor_relay_requested_on') is False) and response.get('state') in {'STOPPED','DISARMED','LOCKOUT'})

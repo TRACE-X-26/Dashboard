@@ -1,3 +1,5 @@
+> Superseded: use [PROTECTED_HARDWARE_INTEGRATION.md](PROTECTED_HARDWARE_INTEGRATION.md). Version 0.6.0 restores electrical protection and requires verified upstream sensing; default outputs are disabled.
+
 > Current behavior: motor voltage/current cutoffs were removed at the operator's request. Use [BRANCH_POWER_UPDATE.md](BRANCH_POWER_UPDATE.md) for firmware 0.5.2, matching Pi profile migration, flashing and deployment. Older threshold statements below describe earlier versions.
 
 # Supervised motor-enabled build — November 11, 2026

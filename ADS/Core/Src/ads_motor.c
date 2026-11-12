@@ -6,10 +6,17 @@ static volatile uint8_t watchdog_ready;
 static volatile uint8_t shutdown_latched;
 static volatile uint8_t run_deadline_active;
 static volatile uint32_t run_start_ms, run_duration_ms;
+static volatile uint32_t power_started_ms;
+static volatile int power_state;
+static volatile uint8_t power_authorized;
 
-void ADS_Motor_Stop(void)
+__attribute__((weak)) int ADS_Motor_ProtectionReady(void) { return 0; }
+__attribute__((weak)) int ADS_Motor_IdleReady(void) { return 0; }
+__attribute__((weak)) int ADS_Motor_PowerSampleState(uint32_t powered_ms) { (void)powered_ms; return -1; }
+int ADS_Motor_PowerState(void) { return power_state; }
+
+static void pwm_off(void)
 {
-  run_deadline_active = 0;
   GPIO_InitTypeDef gpio = {0};
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
@@ -27,6 +34,12 @@ void ADS_Motor_Stop(void)
   gpio.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(MOTOR_PWM_GPIO_Port, &gpio);
 
+ }
+void ADS_Motor_Stop(void)
+{
+  run_deadline_active=0;power_state=0;power_authorized=0;
+  pwm_off();
+  GPIO_InitTypeDef gpio={0};
   gpio.Pin = MOTOR_RELAY_Pin;
 #if ADS_RELAY_POLARITY_VERIFIED
   /* Preload before switching the pin to output; never pulse the other level. */
@@ -67,7 +80,12 @@ void ADS_Motor_Fault(void)
 
 void ADS_Motor_Poll(uint32_t now_ms)
 {
-  if (run_deadline_active && !ADS_Motor_OperationReady()) ADS_Motor_Fault();
+  if(power_state==1 || power_state==2) {
+    int state=ADS_Motor_PowerSampleState(power_started_ms);
+    if(!ADS_Motor_OperationReady() || state<0 || (uint32_t)(now_ms-power_started_ms)>=ADS_POWER_CHECK_TIMEOUT_MS) ADS_Motor_Fault();
+    else if(state==1) power_state=2;
+  }
+  if (run_deadline_active && (!ADS_Motor_OperationReady() || !ADS_Motor_ProtectionReady())) ADS_Motor_Fault();
   if (run_deadline_active && (uint32_t)(now_ms-run_start_ms)>=run_duration_ms)
     ADS_Motor_Stop();
   if (watchdog_ready && !shutdown_latched &&
@@ -119,6 +137,7 @@ int ADS_Motor_OperationReady(void)
 int ADS_Motor_OutputEnabled(void) { return ADS_BOARD_ACCEPTED; }
 const char *ADS_Motor_BlockReason(void)
 {
+  if (!ADS_PROTECTION_LIMITS_VERIFIED) return "PROTECTION_LIMITS_UNVERIFIED";
   if (!ADS_RELAY_SAFE_OUTPUT_VERIFIED) return "RELAY_RESET_BEHAVIOR_UNVERIFIED";
   if (ADS_MOTOR_OPERATING_MODE==ADS_MODE_SUPERVISED_TEST && !ADS_SUPERVISED_TESTING_APPROVED) return "SUPERVISED_MODE_NOT_APPROVED";
   if (ADS_FORWARD_GPIO_LEVEL!=0 && ADS_FORWARD_GPIO_LEVEL!=1) return "DIRECTION_LEVEL_UNCONFIGURED";
@@ -135,7 +154,19 @@ int ADS_Motor_Rearm(void)
   /* Explicit command adapter only; never called by heartbeat/reconnect/Init. */
   if (!ADS_Motor_OperationReady()) return 0;
   ADS_Motor_Stop();
-  shutdown_latched=0; last_heartbeat_ms=HAL_GetTick(); watchdog_ready=1;
+  shutdown_latched=0;power_authorized=1; last_heartbeat_ms=HAL_GetTick(); watchdog_ready=1;
+  return 1;
+#else
+  return 0;
+#endif
+}
+int ADS_Motor_PreparePower(void)
+{
+#if ADS_BOARD_ACCEPTED
+  if(shutdown_latched || !power_authorized || power_state || !ADS_Motor_OperationReady() || !ADS_Motor_IdleReady()) return 0;
+  ADS_Motor_Stop(); /* PWM held LOW; circuit relay remains independent. */
+  power_started_ms=HAL_GetTick();power_state=1;
+  HAL_GPIO_WritePin(GPIOB,MOTOR_RELAY_Pin,ADS_RELAY_ACTIVE_LEVEL?GPIO_PIN_SET:GPIO_PIN_RESET);
   return 1;
 #else
   return 0;
@@ -145,9 +176,9 @@ int ADS_Motor_StartPWM(uint32_t pwm, uint32_t duration_ms)
 {
 #if ADS_BOARD_ACCEPTED
   GPIO_InitTypeDef gpio={0};
-  if (shutdown_latched || !ADS_Motor_OperationReady() || pwm!=ADS_BENCH_PWM_PERCENT || !duration_ms ||
+  if (shutdown_latched || power_state!=2 || !ADS_Motor_OperationReady() || !ADS_Motor_ProtectionReady() || pwm!=ADS_BENCH_PWM_PERCENT || !duration_ms ||
       duration_ms>ADS_BENCH_MAX_DURATION_MS || HAL_RCC_GetPCLK1Freq()!=42000000U) return 0;
-  ADS_Motor_Stop();
+  pwm_off(); /* Keep the verified, already-energized relay closed. */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   HAL_GPIO_WritePin(GPIOA,MOTOR_DIRECTION_Pin,ADS_FORWARD_GPIO_LEVEL?GPIO_PIN_SET:GPIO_PIN_RESET);
   gpio.Pin=MOTOR_DIRECTION_Pin; gpio.Mode=GPIO_MODE_OUTPUT_PP; gpio.Pull=GPIO_NOPULL;
@@ -160,7 +191,7 @@ int ADS_Motor_StartPWM(uint32_t pwm, uint32_t duration_ms)
   TIM2->CR1=TIM_CR1_ARPE; TIM2->EGR=TIM_EGR_UG;
   gpio.Pin=MOTOR_PWM_Pin; gpio.Mode=GPIO_MODE_AF_PP; gpio.Alternate=GPIO_AF1_TIM2;
   HAL_GPIO_Init(GPIOB,&gpio);
-  run_start_ms=HAL_GetTick(); run_duration_ms=duration_ms; run_deadline_active=1;
+  run_start_ms=HAL_GetTick(); run_duration_ms=duration_ms; run_deadline_active=1; power_state=3;
   /* Direction is established and compare staged with PWM disabled.
    * Energize the motor branch before enabling the PWM channel. */
   HAL_GPIO_WritePin(GPIOB,MOTOR_RELAY_Pin,ADS_RELAY_ACTIVE_LEVEL?GPIO_PIN_SET:GPIO_PIN_RESET);

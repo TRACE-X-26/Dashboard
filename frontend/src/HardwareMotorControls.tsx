@@ -5,7 +5,7 @@ import INA219Readings from './INA219Readings'
 import type { AutomatedRun } from './types'
 
 type HardwareStatus = {
-  operating_mode: string; power_feedback_installed: boolean; electrical_limits_enabled: boolean | null;
+  operating_mode: string; power_feedback_installed: boolean; electrical_limits_enabled: boolean | null; protection_limits_verified: boolean; supply_sensing_verified: boolean;
   profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null;
   max_duration_ms: number; active_run: AutomatedRun | null;
   hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null;
@@ -82,9 +82,9 @@ export default function HardwareMotorControls() {
   }
   const sample = run?.latest_measurement
   return <section className="panel motor-controls">
-    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · real USB serial commands</p></div><span className="mode-chip">HARDWARE</span></div>
+    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · relay-on voltage check at zero PWM before motor start</p></div><span className="mode-chip">HARDWARE</span></div>
     <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
-    <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Voltage/current cutoffs: {status?.electrical_limits_enabled === false ? 'disabled · telemetry only' : 'configuration not checked'}</p>
+    <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Voltage/current protection: {status?.electrical_limits_enabled === true ? '10–14 V · trip at 1.5 A' : 'unprotected / blocked'} · Downstream sensing: {status?.supply_sensing_verified ? 'relay-on check required · PWM stays zero' : 'configuration pending'}</p>
     <p>Hardware runtime: {status?.hardware_control_enabled ? 'explicitly enabled' : 'disabled'} · STM32 output permission: {status?.firmware_hardware_control == null ? 'not checked' : status.firmware_hardware_control ? 'reported enabled' : 'reported disabled'}</p>
     <p role="status">{status?.preflight.reason ?? 'Hardware preflight not performed'}</p>
     <button className="secondary" disabled={!status?.profile_ready || active || pending} onClick={preflight}>Check hardware · no motor commands</button>

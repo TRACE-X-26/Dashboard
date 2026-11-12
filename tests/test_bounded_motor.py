@@ -61,6 +61,17 @@ class BoundedMotorTests(unittest.TestCase):
         self.assertTrue(r[6]['power_on']);self.assertEqual(r[6]['run_id'],5)
         self.assertFalse(r[7]['accepted']);self.assertFalse(r[8]['power_on'])
 
+    def test_active_low_circuit_pin_status_tracks_commanded_level(self):
+        r=self.circuit_results([self.frame('GET_CAPABILITIES',1),self.heartbeat(2),
+            self.frame('GET_CIRCUIT_STATUS',3),self.frame('ARM_CIRCUIT',4,supervised_confirmed=True),
+            self.frame('START_CIRCUIT',5,duration_ms=1000),self.frame('STOP_CIRCUIT',6)])
+        self.assertEqual(r[1]['firmware_version'],'0.7.0-downstream-protected')
+        self.assertEqual(r[1]['motor_relay_active_level'],0)
+        self.assertEqual(r[1]['circuit_relay_active_level'],0)
+        self.assertTrue(r[3]['relay_command_high']);self.assertFalse(r[3]['power_on'])
+        self.assertFalse(r[5]['relay_command_high']);self.assertTrue(r[5]['power_on'])
+        self.assertTrue(r[6]['relay_command_high']);self.assertFalse(r[6]['power_on'])
+
     def test_circuit_deadline_heartbeat_sensor_fault_and_emergency(self):
         setup=[self.heartbeat(),self.frame('ARM_CIRCUIT',2,supervised_confirmed=True),
                self.frame('START_CIRCUIT',3,duration_ms=30000)]
@@ -85,6 +96,25 @@ class BoundedMotorTests(unittest.TestCase):
         r=self.circuit_results([self.heartbeat(),self.frame('ARM_CIRCUIT',2,supervised_confirmed=True),
                                self.frame('START_CIRCUIT',3,duration_ms=30001)])
         self.assertFalse(r[3]['accepted']);self.assertFalse(r[3]['power_on'])
+
+    def test_downstream_power_check_precedes_pwm_and_cannot_be_replayed(self):
+        r=self.circuit_results([self.heartbeat(),self.frame('ARM_TEST',2),
+            self.frame('START_TEST',3,pwm_percent=10,duration_ms=1000,direction='FORWARD'),
+            self.frame('PREPARE_TEST_POWER',4),self.frame('PREPARE_TEST_POWER',4),
+            self.frame('PREPARE_TEST_POWER',5),b'+',self.frame('GET_STATUS',6),
+            self.frame('START_TEST',7,pwm_percent=10,duration_ms=1000,direction='FORWARD'),self.frame('STOP_TEST',8)],'downstream')
+        self.assertEqual(r[3]['reason'],'POWER_CHECK_REQUIRED')
+        self.assertFalse(r[4]['accepted']);self.assertFalse(r[5]['accepted'])
+        self.assertEqual(r[6]['state'],'POWER_READY');self.assertEqual(r[6]['applied_pwm_percent'],0)
+        self.assertTrue(r[7]['accepted']);self.assertEqual(r[7]['applied_pwm_percent'],10)
+        self.assertFalse(r[8]['motor_relay_requested_on']);self.assertEqual(r[8]['applied_pwm_percent'],0)
+
+    def test_downstream_pending_timeout_fault_and_cancellation(self):
+        setup=[self.heartbeat(),self.frame('ARM_TEST',2),self.frame('PREPARE_TEST_POWER',3)]
+        for ending in ([b'@@'],[b'!'],[self.frame('STOP_TEST',4)],[self.frame('EMERGENCY_STOP',4)]):
+            r=self.circuit_results(setup+ending+[self.frame('GET_STATUS',5)],'downstream')
+            self.assertIn(r[5]['state'],('STOPPED','LOCKOUT'))
+            self.assertEqual(r[5]['applied_pwm_percent'],0);self.assertFalse(r[5]['motor_relay_requested_on'])
 
     def test_controller_deadlines_faults_rearm_limits_and_sensor_conversions(self):
         subprocess.run([self.exe],check=True)

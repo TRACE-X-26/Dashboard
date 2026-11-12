@@ -2,6 +2,8 @@
 #include "ads_sensors.h"
 #include "ads_acquisition.h"
 #include "ads_ina219.h"
+#include "ads_protection.h"
+#include "ads_motor.h"
 static ADS_INA219 motor_ina, circuit_ina;
 #include "ads_board_config.h"
 #include <string.h>
@@ -114,12 +116,14 @@ void ADS_Sensors_Poll(void)
   ADS_INA219_Poll(&motor_ina,&ina_bus); /* Motor first; independent timestamps. */
   ADS_INA219_Poll(&circuit_ina,&ina_bus);
   if (cache.info.electrical_sequence!=motor_ina.acquisition.info.electrical_sequence) {
+    uint32_t irq=__get_PRIMASK(); __disable_irq();
     memcpy(cache.channels,motor_ina.acquisition.channels,3*sizeof(ADS_Sample));
     cache.info.sample_sequence++;
     cache.info.electrical_sequence=motor_ina.acquisition.info.electrical_sequence;
     cache.info.electrical_started_ms=motor_ina.acquisition.info.electrical_started_ms;
     cache.info.electrical_completed_ms=motor_ina.acquisition.info.electrical_completed_ms;
     cache.info.voltage_current_calibrated=motor_ina.calibrated;
+    __set_PRIMASK(irq);
   }
   if((uint32_t)(now-encoder_last)>=1000U) {
     uint32_t irq=__get_PRIMASK(); __disable_irq();
@@ -163,7 +167,26 @@ int ADS_Sensors_Ready(void)
   if(!ADS_INA219_CALIBRATED) return 0;
   if(ADS_TEMPERATURE_ENABLED && !ADS_TEMPERATURE_CALIBRATED) return 0;
   if(!s[0].valid || !s[1].valid || !s[4].valid || (ADS_TEMPERATURE_ENABLED && !s[3].valid)) return 0;
-  /* Any valid fresh voltage/current is accepted, including zero. INA219
-   * conversion overflow/read failures remain invalid; never invent a zero. */
+  if(!ADS_PROTECTION_LIMITS_VERIFIED) return 0;
+  if(ADS_Protection_Electrical(s,HAL_GetTick())) return 0;
   return !ADS_TEMPERATURE_ENABLED || (ADS_MOTOR_MAX_TEMPERATURE_MC>0 && s[3].milli_value<ADS_MOTOR_MAX_TEMPERATURE_MC);
+}
+
+/* Strong board implementation; the output driver fails closed if absent. */
+int ADS_Motor_ProtectionReady(void) { return ADS_Sensors_Ready(); }
+
+int ADS_Motor_IdleReady(void)
+{
+  ADS_Sample s[5];ADS_Sensors_Acquire(s,0);
+  if(!ADS_INA219_CALIBRATED || !ADS_PROTECTION_LIMITS_VERIFIED || !s[4].valid || s[4].milli_value!=0) return 0;
+  /* Before the relay closes, zero voltage is expected, not a range pass. */
+  for(unsigned i=0;i<3;i++) if(!s[i].valid || s[i].timestamp_ms!=s[0].timestamp_ms) return 0;
+  int64_t current=s[1].milli_value;if(current<0)current=-current;
+  if(ADS_Motor_PowerState()==0 && s[0].milli_value>=(int32_t)ADS_MOTOR_MIN_VOLTAGE_MV) return 0;
+  return s[0].milli_value>=0 && s[0].milli_value<=(int32_t)ADS_MOTOR_MAX_VOLTAGE_MV && current<(int64_t)ADS_MOTOR_MAX_CURRENT_MA;
+}
+int ADS_Motor_PowerSampleState(uint32_t powered_ms)
+{
+  ADS_Sample s[5];ADS_Sensors_Acquire(s,0);
+  return ADS_Protection_DownstreamSample(s,cache.info.electrical_started_ms,powered_ms,HAL_GetTick());
 }

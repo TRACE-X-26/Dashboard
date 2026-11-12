@@ -93,6 +93,7 @@ class STM32SerialConnection:
     """
 
     CONTROL_COMMANDS = {
+        CommandName.PREPARE_TEST_POWER,
         CommandName.ARM_CIRCUIT,
         CommandName.START_CIRCUIT,
         CommandName.STOP_CIRCUIT,

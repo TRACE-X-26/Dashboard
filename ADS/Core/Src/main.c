@@ -25,6 +25,7 @@
 #include "ads_motor.h"
 #include "ads_sensors.h"
 #include "ads_circuit.h"
+#include "ads_circuit_relay.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -72,10 +73,7 @@ static uint32_t ADS_GetTick(void *context);
 static void ADS_StopCircuit(void *context)
 {
   (void)context;
-#if ADS_CIRCUIT_RELAY_VERIFIED
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-  HAL_GPIO_WritePin(CIRCUIT_RELAY_GPIO_Port,CIRCUIT_RELAY_Pin,GPIO_PIN_RESET);
-#endif
+  ADS_CircuitRelay_Off();
 }
 static int ADS_CircuitReady(void *context)
 {
@@ -92,7 +90,7 @@ static int ADS_StartCircuit(uint32_t unused,uint32_t duration,void *context)
   uint32_t irq=__get_PRIMASK(); __disable_irq();
   if(circuit_test.locked || (uint32_t)(HAL_GetTick()-circuit_test.last_heartbeat_ms)>=2000U || !ADS_CircuitReady(NULL)) { __set_PRIMASK(irq); return 0; }
   ADS_Motor_Stop();
-  HAL_GPIO_WritePin(CIRCUIT_RELAY_GPIO_Port,CIRCUIT_RELAY_Pin,GPIO_PIN_SET);
+  ADS_CircuitRelay_On();
   __set_PRIMASK(irq);
   return 1;
 #else
@@ -153,8 +151,14 @@ static void ADS_ReceivePoll(void)
 static int ADS_TestReady(void *context)
 {
   (void)context;
-  return !circuit_test.running && !circuit_test.armed && ADS_Motor_OperationReady() && ADS_Sensors_Ready();
+  return (!(motor_test.running || motor_test.armed) || !ADS_Motor_IsLatched()) && !circuit_test.running && !circuit_test.armed && ADS_Motor_OperationReady() && (motor_test.running ? ADS_Sensors_Ready() : ADS_Motor_IdleReady());
 }
+static int ADS_TestPreparePower(void *context)
+{
+  (void)context;uint32_t irq=__get_PRIMASK();__disable_irq();
+  int result=ADS_Motor_PreparePower();__set_PRIMASK(irq);return result;
+}
+static int ADS_TestPowerState(void *context) { (void)context;return ADS_Motor_PowerState(); }
 static int ADS_TestFeedback(void *context)
 { (void)context; return ADS_Motor_PowerFeedbackState(); }
 static int ADS_TestArm(void *context)
@@ -217,13 +221,7 @@ int main(void)
 
   /* USER CODE BEGIN Init */
   ADS_Motor_Init();
-#if ADS_CIRCUIT_RELAY_VERIFIED
-  ADS_StopCircuit(NULL);
-  GPIO_InitTypeDef circuit_gpio={0};
-  circuit_gpio.Pin=CIRCUIT_RELAY_Pin; circuit_gpio.Mode=GPIO_MODE_OUTPUT_PP;
-  circuit_gpio.Pull=GPIO_NOPULL; circuit_gpio.Speed=GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(CIRCUIT_RELAY_GPIO_Port,&circuit_gpio);
-#endif
+  ADS_CircuitRelay_Init();
 
   /* USER CODE END Init */
 
@@ -243,6 +241,7 @@ int main(void)
   ADS_Sensors_Init();
   ADS_Test_Init(&motor_test, ADS_BENCH_PWM_PERCENT, ADS_BENCH_MAX_DURATION_MS,
                 ADS_Motor_OutputEnabled(), ADS_TestReady, ADS_TestStart, ADS_StopMotor, NULL);
+  motor_test.power_required=1;motor_test.prepare_power=ADS_TestPreparePower;motor_test.power_state=ADS_TestPowerState;
   motor_test.disabled_reason=ADS_Motor_BlockReason();
   motor_test.supervised_required=ADS_MOTOR_OPERATING_MODE==ADS_MODE_SUPERVISED_TEST;
   motor_test.power_feedback_installed=ADS_POWER_FEEDBACK_INSTALLED;
