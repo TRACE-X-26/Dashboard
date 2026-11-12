@@ -1,114 +1,185 @@
-import { captureRunConditions } from './runConditions'
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
-import INA219Readings from './INA219Readings'
 import type { AutomatedRun } from './types'
 
 type HardwareStatus = {
-  operating_mode: string; power_feedback_installed: boolean; electrical_limits_enabled: boolean | null; protection_limits_verified: boolean; supply_sensing_verified: boolean;
-  profile_ready: boolean; reason: string; asset_id: string; fixed_pwm_percent: number | null;
-  max_duration_ms: number; active_run: AutomatedRun | null;
-  hardware_control_enabled: boolean; hardware_control: boolean; firmware_hardware_control: boolean | null;
-  preflight: { ready: boolean; reason: string; stale: boolean };
+  operating_mode: string
+  profile_ready: boolean
+  reason: string
+  asset_id: string
+  fixed_pwm_percent: number | null
+  max_duration_ms: number
+  active_run: AutomatedRun | null
+  hardware_control_enabled: boolean
+  hardware_control: boolean
+  firmware_hardware_control: boolean | null
+  preflight: { ready: boolean; reason: string; stale: boolean }
 }
-const terminal = (run: AutomatedRun | null) => !run || !!run.ended_at
-const value = (v: number | null | undefined, digits = 2) => v == null ? '—' : v.toFixed(digits)
 
+const format = (number: number | null | undefined, digits = 2) =>
+  number == null || !Number.isFinite(number) ? '—' : number.toFixed(digits)
+const running = (run: AutomatedRun | null) => !!run && !run.ended_at
+
+/**
+ * Simple motor station: read-only readiness happens automatically.
+ * The start API and STM32 independently repeat every required safety check.
+ * No status result here is used to override backend permissions.
+ */
 export default function HardwareMotorControls() {
   const [status, setStatus] = useState<HardwareStatus | null>(null)
   const [run, setRun] = useState<AutomatedRun | null>(null)
-  const [pwm, setPwm] = useState(50)
-  const [duration, setDuration] = useState(30)
-  const [pending, setPending] = useState(false)
-  const [supervisedConfirmed, setSupervisedConfirmed] = useState(false)
   const [error, setError] = useState('')
-  const socketRef = useRef<WebSocket | null>(null)
+  const [pending, setPending] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const preflightBusy = useRef(false)
+  const activeRef = useRef(false)
+  const mounted = useRef(false)
+
   useEffect(() => {
-    let mounted = true
+    mounted.current = true
+
     async function refresh() {
       try {
         const next = await api.hardwareMotorStatus()
-        if (!mounted) return
+        if (!mounted.current) return
         setStatus(next)
-        if (next.active_run) setRun(next.active_run)
-      } catch (err) { if (mounted) setError(String(err)) }
+        if (next.active_run) {
+          setRun(next.active_run)
+          activeRef.current = !next.active_run.ended_at
+        } else {
+          activeRef.current = false
+        }
+      } catch {
+        if (mounted.current) {
+          setStatus(null)
+          setError('Cannot reach the TRACE-X backend.')
+        }
+      }
     }
-    refresh()
-    const timer = window.setInterval(refresh, 1000)
-    return () => { mounted = false; window.clearInterval(timer) }
+
+    async function checkReadiness() {
+      if (preflightBusy.current || activeRef.current) return
+      preflightBusy.current = true
+      if (mounted.current) setChecking(true)
+      try {
+        // Read-only; does not ARM, switch relays, set PWM, or start a motor.
+        await api.hardwareMotorPreflight()
+        await refresh()
+      } catch (err) {
+        if (mounted.current) setError(String(err))
+      } finally {
+        preflightBusy.current = false
+        if (mounted.current) setChecking(false)
+      }
+    }
+
+    void refresh().then(() => checkReadiness())
+    const statusTimer = window.setInterval(() => { void refresh() }, 1000)
+    // Preflight expires after 15 s; refresh periodically without user interaction.
+    const readinessTimer = window.setInterval(() => { void checkReadiness() }, 8000)
+    return () => {
+      mounted.current = false
+      window.clearInterval(statusTimer)
+      window.clearInterval(readinessTimer)
+    }
   }, [])
+
   const runId = run?.id
   useEffect(() => {
     if (!runId) return
     const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/automated/${runId}`)
-    socketRef.current = socket
     socket.onmessage = event => {
       const next: AutomatedRun = JSON.parse(event.data)
       setRun(next)
+      activeRef.current = !next.ended_at
       if (next.ended_at) socket.close()
     }
-    socket.onerror = () => setError('STM32 test stream unavailable. Stop is not confirmed; check saved status.')
-    return () => { socket.close(); socketRef.current = null }
+    socket.onerror = () => setError('Motor status stream unavailable. Use the physical power cutoff if a stop cannot be confirmed.')
+    return () => { socket.close() }
   }, [runId])
-  const active = !terminal(run)
-  const supervised = status?.operating_mode === 'SUPERVISED_TEST'
-  async function preflight() {
-    setPending(true); setError('')
-    try {
-      await api.hardwareMotorPreflight()
-      setStatus(await api.hardwareMotorStatus())
-    } catch (err) { setError(String(err)) }
-    finally { setPending(false) }
-  }
+
+  const active = running(run) || !!status?.active_run && running(status.active_run)
+  const ready = !!status?.hardware_control && !checking && !pending && !active
+  const pwm = status?.fixed_pwm_percent
+  const maxDuration = status?.max_duration_ms ?? 30000
+  const durationMs = Math.min(30000, maxDuration)
+  const sample = active ? run?.latest_measurement : null
+  const reason = !status
+    ? 'Connecting to the Raspberry Pi…'
+    : !status.profile_ready
+      ? status.reason || 'Hardware profile needs commissioning.'
+      : !status.hardware_control_enabled
+        ? 'Pi hardware control has not been enabled.'
+        : status.firmware_hardware_control === false
+          ? 'STM32 firmware reports motor output disabled.'
+          : status.preflight.reason || 'Checking STM32 and sensors…'
+
   async function start() {
-    if (supervised && !supervisedConfirmed) return
-    if (!window.confirm(`${supervised ? 'SUPERVISED TEST: remain present with the physical power cutoff accessible. PC8 feedback may not be installed. ' : ''}Start the real motor at ${pwm}% PWM for ${duration} seconds? Keep the physical power switch accessible.`)) return
-    const conditions = captureRunConditions()
-    if (!conditions) return
-    const confirmation = supervised && supervisedConfirmed
-    setSupervisedConfirmed(false)
-    setPending(true); setError('')
+    if (!ready || pwm == null || pwm <= 0 || durationMs < 100) return
+    // Single explicit confirmation is the supervised operator authorization.
+    if (!window.confirm(`Start the physical motor at ${pwm}% PWM for up to ${durationMs / 1000} seconds? Stay present with the physical power cutoff accessible.`)) return
+    setPending(true)
+    setError('')
     try {
-      const next = await api.startAutomated({ mode: 'hardware', device_id: status?.asset_id,
-        tests: [`pwm_${pwm}`], duration_ms: Math.round(duration * 1000), operator_authorized: true, supervised_confirmed: confirmation, ...conditions })
+      const next = await api.startAutomated({
+        mode: 'hardware',
+        device_id: status?.asset_id,
+        tests: [`pwm_${pwm}`],
+        duration_ms: durationMs,
+        operator_authorized: true,
+        supervised_confirmed: status?.operating_mode === 'SUPERVISED_TEST',
+      })
       setRun(next)
-    } catch (err) { setError(String(err)) }
-    finally { setPending(false) }
+      activeRef.current = true
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setPending(false)
+    }
   }
+
   async function stop(emergency = false) {
-    if (!run) return
-    try { await api.stopAutomated(run.id, emergency) }
-    catch (err) { setError(String(err)) }
+    const current = status?.active_run ?? run
+    if (!current) return
+    setPending(true)
+    setError('')
+    try {
+      await api.stopAutomated(current.id, emergency)
+      // Do not claim motor shutdown until STM32 acknowledgment is reported.
+    } catch (err) {
+      setError(`Stop was not confirmed: ${String(err)}. Use the physical power cutoff.`)
+    } finally {
+      setPending(false)
+    }
   }
-  const sample = run?.latest_measurement
+
   return <section className="panel motor-controls">
-    <div className="panel-title"><div><h2>STM32 motor test</h2><p>JGA25-371 · relay-on voltage check at zero PWM before motor start</p></div><span className="mode-chip">HARDWARE</span></div>
-    <p>{status?.profile_ready ? 'Pi profile ready. STM32 identity and sensor checks must still pass before starting.' : status?.reason ?? 'Checking Pi hardware configuration…'}</p>
-    <p>Pi operating mode: <strong>{status?.operating_mode ?? 'UNKNOWN'}</strong> · Power feedback: {status?.power_feedback_installed ? 'installed; verification required' : 'NOT INSTALLED'} · Voltage/current protection: {status?.electrical_limits_enabled === true ? '10–14 V · trip at 1.5 A' : 'unprotected / blocked'} · Downstream sensing: {status?.supply_sensing_verified ? 'relay-on check required · PWM stays zero' : 'configuration pending'}</p>
-    <p>Hardware runtime: {status?.hardware_control_enabled ? 'explicitly enabled' : 'disabled'} · STM32 output permission: {status?.firmware_hardware_control == null ? 'not checked' : status.firmware_hardware_control ? 'reported enabled' : 'reported disabled'}</p>
-    <p role="status">{status?.preflight.reason ?? 'Hardware preflight not performed'}</p>
-    <button className="secondary" disabled={!status?.profile_ready || active || pending} onClick={preflight}>Check hardware · no motor commands</button>
-    {supervised && <label><input type="checkbox" checked={supervisedConfirmed} disabled={active || pending} onChange={e => setSupervisedConfirmed(e.target.checked)}/> I will supervise this test and have an operator-controlled physical emergency power cutoff accessible.</label>}
-    <div className="control-bar">
-      <label>PWM<select value={pwm} disabled={active || pending} onChange={e => setPwm(Number(e.target.value))}>{[10, 25, 50, 75, 100].map(p => <option key={p} value={p} disabled={!status?.profile_ready || p !== status.fixed_pwm_percent}>{p}%{p !== status?.fixed_pwm_percent ? ' · requires approval' : ''}</option>)}</select></label>
-      <label>Duration (seconds)<input type="number" min="0.1" max={Math.min(30, (status?.max_duration_ms || 30000) / 1000)} step="0.1" value={duration} disabled={active || pending} onChange={e => setDuration(Number(e.target.value))}/></label>
-      <button className="primary" disabled={!status?.hardware_control || (supervised && !supervisedConfirmed) || active || pending || pwm !== status.fixed_pwm_percent || !Number.isFinite(duration) || duration < 0.1 || duration * 1000 > status.max_duration_ms} onClick={start}>Start Motor</button>
-      <button className="secondary" disabled={!active} onClick={() => stop()}>Stop Motor</button>
-      <button className="estop" disabled={!active} onClick={() => stop(true)}>EMERGENCY STOP</button>
+    <div className="panel-title">
+      <div><p className="eyebrow">TRACE-X 2.0</p><h2>Motor Testing</h2></div>
+      <span className="mode-chip">HARDWARE</span>
     </div>
-    <p>STM32 operating mode: {run?.operating_mode ?? 'Not yet reported'} · Feedback state: {run?.power_feedback_state ?? 'Not yet reported'}</p>
-    <div className="driver-state"><div><span>Motor command state</span><strong>{run?.device_state ?? 'UNKNOWN'}</strong></div><div><span>Requested PWM</span><strong>{run?.requested_pwm_percent == null ? '—' : `${run.requested_pwm_percent}%`}</strong></div><div><span>STM32-applied PWM</span><strong>{run?.applied_pwm_percent == null ? '—' : `${run.applied_pwm_percent}%`}</strong></div></div>
-    <section className="metric-grid motor-metrics">
-      <div className="metric"><span>Voltage</span><strong>{value(sample?.voltage)}<small> V</small></strong></div>
-      <div className="metric"><span>Current</span><strong>{value(sample?.current)}<small> A</small></strong></div>
-      <div className="metric"><span>Output RPM · {sample?.rpm_calibrated ? 'calibrated' : 'provisional / uncalibrated'}</span><strong>{value(sample?.rpm, 0)}</strong></div>
-      <div className="metric"><span>Input power</span><strong>{value(sample?.input_power)}<small> W</small></strong></div>
+    <p role="status">
+      <strong>{active ? 'Running' : ready ? 'Ready' : checking ? 'Checking' : 'Not Ready'}</strong>
+      {!ready && !active ? ` · ${reason}` : ''}
+    </p>
+    <section className="metric-grid motor-metrics" aria-label="Live motor measurements">
+      <div className="metric"><span>Voltage</span><strong>{format(sample?.voltage)}<small> V</small></strong></div>
+      <div className="metric"><span>Current</span><strong>{format(sample?.current)}<small> A</small></strong></div>
+      <div className="metric"><span>Motor Speed</span><strong>{format(sample?.rpm, 0)}<small> RPM</small></strong></div>
+      <div className="metric"><span>Power</span><strong>{format(sample?.input_power)}<small> W</small></strong></div>
     </section>
-    <INA219Readings branches={sample?.ina219} fresh={active}/>
-    <p>{run ? `${run.state} · ${(run.elapsed_seconds ?? 0).toFixed(1)} s · ${run.stop_confirmed ? 'STM32 zero-output acknowledged' : 'Stopped state not confirmed'}` : 'No hardware run selected. No simulated values are shown here.'}</p>
+    <div className="driver-state">
+      <div><span>PWM</span><strong>{pwm == null ? '—' : `${pwm}%`}</strong></div>
+      <div><span>Test Duration</span><strong>{durationMs / 1000} seconds maximum</strong></div>
+    </div>
+    <div className="control-bar">
+      <button className="primary" disabled={!ready || pwm == null || durationMs < 100} onClick={() => { void start() }}>START MOTOR</button>
+      <button className="danger" disabled={!active || pending} onClick={() => { void stop() }}>STOP MOTOR</button>
+      <button className="estop" disabled={!active || pending} onClick={() => { void stop(true) }}>EMERGENCY STOP</button>
+    </div>
+    {run && <p role="status">{run.state} · {run.stop_confirmed ? 'STM32 stop acknowledged' : 'Physical stop not independently verified'}</p>}
+    {error && <p role="alert">{error}</p>}
     {run?.faults?.length ? <p role="alert">Faults: {run.faults.join(', ')}</p> : null}
-    {(error || run?.reason) && <p role="alert">{error || run?.reason}</p>}
-    {run && <a className="secondary" href={`/api/automated/runs/${run.id}/csv`}>Download motor CSV</a>}
-    <p>Applied PWM is the STM32 output setting, not a measured waveform. Encoder scaling assumes 374 A-channel rising edges per output revolution. Leaving this page cancels an active hardware test.</p>
+    <p className="muted">Automatic checks remain active in the Pi backend and STM32. The physical cutoff is independent of this screen. RPM may be provisional until encoder calibration is verified.</p>
   </section>
 }
