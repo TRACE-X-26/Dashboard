@@ -19,7 +19,7 @@ class ProtectionTests(unittest.TestCase):
             path=Path(d)/'profile.json'
             for location,verified in [('UPSTREAM_MOTOR_RELAY',False),('UPSTREAM_MOTOR_RELAY',True)]:
                 p['supply_sensing']={'location':location,'verified':verified};path.write_text(json.dumps(p))
-                with self.assertRaisesRegex(RunRejected,'Downstream motor sensing'):load_hardware_profile(path)
+                self.assertTrue(any('Downstream motor sensing' in w for w in load_hardware_profile(path)['warnings']))
                 # Circuit supply switching does not borrow motor voltage/sensing requirements.
                 with self.assertRaises(RunRejected):load_hardware_profile(path,require_motor_protection=False)
             p['supply_sensing']={'location':'DOWNSTREAM_MOTOR_RELAY','verified':True}

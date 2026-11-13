@@ -24,7 +24,7 @@ TRANSITIONS={
 }
 class InterruptedRun(Exception):pass
 
-def load_hardware_profile(path, *, require_motor_protection=True):
+def _load_commissioned_profile(path, *, require_motor_protection=True):
     if not path:raise RunRejected('Hardware disabled: no commissioning profile configured')
     profile=json.loads(Path(path).read_text())
     if not isinstance(profile,dict):raise RunRejected('Hardware profile must be a JSON object')
@@ -69,6 +69,59 @@ def load_hardware_profile(path, *, require_motor_protection=True):
         raise RunRejected('COM-LOW relay profile required: active=0 / inactive=1')
     return profile
 
+def load_hardware_profile(path, *, require_motor_protection=True):
+    """Motor metadata is advisory; circuit power retains its separate policy.
+
+    Routing still requires an unambiguous USB identity. Defaults below describe
+    requests and analysis, never hardware readiness or measured values.
+    """
+    if not require_motor_protection:
+        return _load_commissioned_profile(path, require_motor_protection=False)
+    warnings=[]
+    try:
+        profile=json.loads(Path(path).read_text()) if path else {}
+        if not isinstance(profile,dict):
+            warnings.append('Hardware profile is not an object; metadata unavailable')
+            profile={}
+    except (OSError,ValueError) as exc:
+        warnings.append('Hardware profile unavailable: '+str(exc));profile={}
+    try:
+        _load_commissioned_profile(path)
+    except (OSError,ValueError,TypeError) as exc:
+        warnings.append(str(exc))
+    profile=dict(profile)
+    defaults={'asset_id':'MOTOR-001','device_id':'STM32-ADS','calibration_id':None,
+              'fixture_id':None,'firmware_version':None,'fixed_pwm_percent':50,
+              'max_duration_ms':30000,'baselines':{},'operating_mode':'UNKNOWN'}
+    for key,value in defaults.items():
+        if key not in profile:profile[key]=value
+    for key in ('asset_id','device_id','operating_mode'):
+        if not isinstance(profile[key],str) or not profile[key].strip():
+            warnings.append('Invalid metadata: '+key)
+            profile[key]=defaults[key]
+    if type(profile['fixed_pwm_percent']) is not int or profile['fixed_pwm_percent'] not in (10,25,50,75,100):
+        warnings.append('Configured duty is invalid; request default is 50%')
+        profile['fixed_pwm_percent']=50
+    if type(profile['max_duration_ms']) is not int or not 100<=profile['max_duration_ms']<=30000:
+        warnings.append('Configured duration is invalid; request ceiling is 30000 ms')
+        profile['max_duration_ms']=30000
+    if not isinstance(profile.get('limits'),dict):profile['limits']={}
+    profile['limits']={**{'min_voltage':10.,'max_voltage':14.,'max_current':1.5},**profile['limits']}
+    for key,value in [('min_voltage',10.),('max_voltage',14.),('max_current',1.5)]:
+        if type(profile['limits'][key]) not in (int,float) or not math.isfinite(profile['limits'][key]):
+            warnings.append('Invalid analysis limit metadata: '+key)
+            profile['limits'][key]=value
+    # These are analysis metadata only; the STM32 enforces its own limits.
+    if not isinstance(profile['baselines'],dict):profile['baselines']={}
+    for key in list(profile['baselines']):
+        if not isinstance(profile['baselines'][key],dict):
+            warnings.append('Invalid baseline metadata: '+key)
+            del profile['baselines'][key]
+    if not profile['baselines']:warnings.append('No baseline available; health assessment may be insufficient')
+    if not profile.get('calibration_verified'):warnings.append('Calibration metadata unverified')
+    profile['warnings']=warnings
+    return profile
+
 class AutomatedTestEngine:
     def __init__(self,path,*,hardware_profile_path='',connection_factory=None,publish=None,
                  hardware_control_enabled=False, serial_baud=115200, serial_read_timeout=.25,
@@ -91,40 +144,14 @@ class AutomatedTestEngine:
     def available(self,mode):
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
         if mode=='simulation':return registry(mode)
-        try:
-            self.hardware_runtime.require_permission()
-            p=load_hardware_profile(self.hardware_profile_path)
-        except (ValueError,OSError) as exc:
-            return [{**item,'available':False,'unavailable_reason':str(exc)} for item in registry(mode)]
-        approved=p.get('additional_procedures_approved',[])
-        if not isinstance(approved,list):approved=[]
-        procedures=registry(mode,p['fixed_pwm_percent'],True,approved)
-        preflight=self.hardware_runtime.snapshot()
-        if not preflight['ready']:
-            return [{**item,'available':False,'unavailable_reason':item.get('unavailable_reason') or preflight['reason']}
-                    for item in procedures]
-        return procedures
+        return registry(mode, ready=True)
     def start(self,request):
         mode=request.get('mode','simulation')
         if mode not in {'simulation','hardware'}:raise RunRejected('Unknown mode')
-        if mode=='hardware':
-            self.hardware_runtime.require_permission()
-            if self.circuit_power.selected_branch == 'CIRCUIT':
-                raise RunRejected('Select Motor before starting a motor test')
         profile=load_hardware_profile(self.hardware_profile_path) if mode=='hardware' else {
             'limits':{'max_current':10.,'min_voltage':9.,'max_voltage':15.},
             'temperature_enabled':False,'baselines':{},'evidence_id':'SOFTWARE_SIMULATION_ONLY','calibration_id':'SYNTHETIC'}
-        if mode=='hardware' and request.get('device_id')!=profile['asset_id']:
-            raise RunRejected('Requested motor does not match commissioned asset')
-        if mode=='hardware' and profile.get('operating_mode','NORMAL')=='SUPERVISED_TEST' and request.get('supervised_confirmed') is not True:
-            raise RunRejected('Fresh supervised operator / physical cutoff confirmation required')
-        if mode=='hardware' and request.get('operator_authorized') is not True:
-            raise RunRejected('Fresh operator authorization required for this sequence')
-        # An explicitly authorized API request can attempt fresh preflight even
-        # without a cached probe. No ARM is sent until in-thread checks pass.
-        approved=profile.get('additional_procedures_approved',[])
-        if not isinstance(approved,list):approved=[]
-        procedures=registry(mode,profile['fixed_pwm_percent'],True,approved) if mode=='hardware' else self.available(mode)
+        procedures=registry(mode,ready=True) if mode=='hardware' else self.available(mode)
         eligible={p['id']:p for p in procedures if p['available']}
         tests=request.get('tests')
         if request.get('run_all') is True:tests=[key for key,item in eligible.items() if not item['requires_setup']]
@@ -132,19 +159,19 @@ class AutomatedTestEngine:
             raise RunRejected('Select a nonempty unique list of at most 20 procedures')
         for test in tests:
             if test not in eligible:raise RunRejected(f'Unavailable procedure {test}: see registry')
-            if REGISTRY[test].requires_setup and any(request.get(key) in (None,'','UNKNOWN') for key in ('load_id','condition')):
+            if mode!='hardware' and REGISTRY[test].requires_setup and any(request.get(key) in (None,'','UNKNOWN') for key in ('load_id','condition')):
                 raise RunRejected('Record the operator-applied load ID and physical condition before this procedure')
-        if mode=='hardware' and profile.get('operating_mode')=='SUPERVISED_TEST' and len(tests)>1:
-            raise RunRejected('Supervised mode requires fresh authorization for each physical procedure')
         duration=request.get('duration_ms',30000)
-        if type(duration) is not int or not 100<=duration<=min(30000,profile.get('max_duration_ms',30000)):
+        if type(duration) is not int or not 100<=duration<=30000:
             raise RunRejected('Duration outside approved bounds (100–30000 ms)')
-        if any(REGISTRY[test].requires_setup for test in tests) and duration<5000:
+        if mode!='hardware' and any(REGISTRY[test].requires_setup for test in tests) and duration<5000:
             raise RunRejected('This observation procedure needs at least five seconds, including a three-second settling window')
         if not self._mutex.acquire(blocking=False):raise RunRejected('Another sequence is active')
         try:
-            if mode=='hardware' and self.circuit_power.selected_branch == 'CIRCUIT':
-                raise RunRejected('Select Motor before starting a motor test')
+            if mode=='hardware':
+                # The shared owner lock excludes active circuit power. Selection
+                # is UI state, not proof of relay contacts or hardware readiness.
+                self.circuit_power.selected_branch='MOTOR'
             self._cancel.clear();self._emergency.clear()
             run=dict(id=str(uuid4()),state='IDLE',mode=mode,source='SIMULATION' if mode=='simulation' else 'stm32_serial',
                 device_id=request.get('device_id','MOTOR-001'),created_at=utcnow(),ended_at=None,
@@ -153,7 +180,7 @@ class AutomatedTestEngine:
                     'supervised_confirmed':request.get('supervised_confirmed') is True,
                     'load_id':request.get('load_id','UNKNOWN'),'condition':request.get('condition','UNKNOWN'),
                     'attached_mass_g':request.get('attached_mass_g'),'fixture_notes':request.get('fixture_notes','')},
-                commissioning=profile,progress=0,active_test=None,steps=[],outcome=None,health_score=None,
+                warnings=list(profile.get('warnings',[])),firmware_acknowledgments=[],commissioning=profile,progress=0,active_test=None,steps=[],outcome=None,health_score=None,
                 algorithm_version='trace-x-matched-baseline-v1',stop_confirmed=False,report_reference=None)
             self.store.create(run)
             with self._data_lock:self.current=run
@@ -214,13 +241,13 @@ class AutomatedTestEngine:
             caps=self._read(connection,'GET_CAPABILITIES')
             report.update(capabilities=caps,firmware_hardware_control=caps.get('hardware_control'))
             status=self._read(connection,'GET_STATUS');report['status']=status
-            self.hardware_runtime.validate_contract(profile,caps,status,profile['max_duration_ms'])
+            report['warnings']=self.hardware_runtime.motor_contract_warnings(profile,caps)
             raw=self._read(connection,'READ_MEASUREMENTS')
             # Read a later MCU tick instead of comparing ticks with host time.
             self._read(connection,'GET_STATUS')
-            self.hardware_runtime.validate_sensors(profile,raw,connection.last_timestamp_ms,phase='deenergized')
-            self.hardware_runtime.require_permission()
-            report.update(ready=True,reason='Off-state sensor checks passed; Start performs the bounded relay-on voltage check at zero PWM before motor PWM is allowed')
+            report['measurements']=raw
+            report['warnings']+=profile.get('warnings',[])
+            report.update(ready=caps.get('hardware_control') is True,reason='Read-only snapshot; Start requests are independent. STM32 enforces physical protections.')
         except Exception as exc:
             report['reason']=str(exc)
         finally:
@@ -235,7 +262,7 @@ class AutomatedTestEngine:
             sim=STM32Simulator(procedure.pwm or 10,scenario)
             return STM32SerialConnection(port='SIMULATION',device_id=sim.device_id,allow_motor_control=True,
                 require_crc=True,command_timeout=.35,transport_factory=lambda *_:sim)
-        return self.hardware_runtime.connection(profile,control=True)
+        return self.hardware_runtime.connection(profile,control=True,motor_request=True)
     def _read(self,connection,command):
         for attempt in range(2):
             try:return connection.execute(command)
@@ -246,6 +273,10 @@ class AutomatedTestEngine:
     def _command(self,connection,command,args=None):
         if command not in {'STOP_TEST','STOP_MOTOR','EMERGENCY_STOP'}:self._check_cancel()
         result=connection.execute(command,args)
+        if self.current:
+            acknowledgment={'command':command,'result':copy.deepcopy(result),'protocol_frame':connection.last_response_frame}
+            self.current.setdefault('firmware_acknowledgments',[]).append(acknowledgment)
+            self.store.event(self.current['id'],{'event':'FIRMWARE_ACK',**acknowledgment})
         if result.get('accepted') is not True:raise RunRejected(f'{command}: {result.get("reason","rejected")}')
         return result
     def _events(self,connection,run):
@@ -308,20 +339,32 @@ class AutomatedTestEngine:
                 'rpm_calibrated':raw.get('encoder_calibrated') is True,'temperature_enabled':temperature_enabled,
                 'ina219':branches}
         if self.publish:self.publish(raw,run['source'])
-        if 'INVALID_SENSOR_DATA' in quality or 'CALIBRATION_UNVERIFIED' in quality or any(q.startswith('STALE') for q in quality):
+        if run['mode']!='hardware' and ('INVALID_SENSOR_DATA' in quality or 'CALIBRATION_UNVERIFIED' in quality or any(q.startswith('STALE') for q in quality)):
             raise RunRejected('Sensor acquisition invalid or stale; motor condition unknown')
         faults=[]
         if run['mode']=='simulation':
             limits=run['commissioning']['limits']
             if abs(values['current'])>=limits['max_current']:faults.append('OVERCURRENT')
             if not limits['min_voltage']<=values['voltage']<=limits['max_voltage']:faults.append('SUPPLY_OUT_OF_RANGE')
-        if procedure.pwm==0 and values['rpm']!=0:faults.append('NOT_STATIONARY')
+        if run['mode']=='simulation' and procedure.pwm==0 and values['rpm'] is not None and values['rpm']!=0:faults.append('NOT_STATIONARY')
         if faults:
             run['confirmed_limit_faults']=faults
             raise RunRejected(','.join(faults))
         if run['mode']=='hardware':
-            self.hardware_runtime.validate_sensors(run['commissioning'],raw,received_tick,
-                phase=electrical_phase or ('deenergized' if started is None else 'running'), powered_ms=powered_ms)
+            # Secondary Pi check of fresh electrical data only. Stale delivery or
+            # optional sensor quality never substitutes for STM32 local protection.
+            electrical=[channels[name] for name in ('voltage','current','power')]
+            if raw.get('voltage_current_calibrated') is True and all(
+                    item['valid'] and ((received_tick-item['timestamp_ms'])&0xffffffff)<=1500 for item in electrical):
+                caps=run.get('device_capabilities',{})
+                voltage=values['voltage'];current=abs(values['current'])
+                if current>=caps['max_current_ma']/1000:raise RunRejected('OVERCURRENT')
+                if voltage<0 or voltage>caps['max_voltage_mv']/1000:raise RunRejected('SUPPLY_OUT_OF_RANGE')
+                if (electrical_phase=='checking' or started is not None) and voltage<caps['min_voltage_mv']/1000:
+                    # During relay settling the STM32 must first acquire a powered sample.
+                    delta=((raw.get('electrical_started_ms',0)-(powered_ms or 0))&0xffffffff)
+                    if electrical_phase!='checking' or 50<=delta<0x80000000:raise RunRejected('SUPPLY_OUT_OF_RANGE')
+            run['warnings']=sorted(set(run.get('warnings',[])+record['quality']))
         return status
     def _run(self,run,profile):
         connection=None;completed=False
@@ -337,7 +380,8 @@ class AutomatedTestEngine:
                 run['firmware_version']=caps.get('firmware_version');run['device_capabilities']=caps
                 if caps.get('integrity')!='CRC32':raise RunRejected('CRC32-capable firmware required')
                 if run['mode']=='hardware':
-                    self.hardware_runtime.validate_contract(profile,caps,status,run['configuration']['duration_ms'])
+                    self.hardware_runtime.validate_motor_protections(caps)
+                    run['warnings']+=self.hardware_runtime.motor_contract_warnings(profile,caps)
                 if status.get('applied_pwm_percent')!=0:raise RunRejected('Output not initially disabled')
                 connection.seed_sequence(status.get('last_control_seq',0))
                 # Sensors need their first acquisition after boot. Only read while
@@ -351,7 +395,7 @@ class AutomatedTestEngine:
                         self._check_cancel();self._cancel.wait(.1)
                 self._transition(run,'ARMED');started=None;device_run_id=None
                 if procedure.pwm:
-                    arm_args={'supervised_confirmed':True} if profile.get('operating_mode')=='SUPERVISED_TEST' else None
+                    arm_args={'supervised_confirmed':True} if run['configuration']['supervised_confirmed'] else None
                     self._command(connection,'ARM_TEST',arm_args)
                     if run['mode']=='hardware':
                         power=self._command(connection,'PREPARE_TEST_POWER')
@@ -392,9 +436,9 @@ class AutomatedTestEngine:
                     status=self._measure(connection,run,procedure,step,started)
                     for event in self._events(connection,run):
                         if event.payload.get('event')=='MOTOR_STOP' and event.payload.get('run_id')==device_run_id:stop_event=event
-                    if procedure.pwm and status.get('state')=='LOCKOUT':raise RunRejected('STM32 lockout')
+                    if procedure.pwm and status.get('state')=='LOCKOUT':raise RunRejected('STM32 lockout: '+str(status.get('stop_reason',status.get('faults','NOT_REPORTED'))))
                     if stop_event:
-                        if stop_event.payload.get('reason')!='COMPLETED':raise RunRejected('STM32 stopped unexpectedly')
+                        if stop_event.payload.get('reason')!='COMPLETED':raise RunRejected('STM32 stopped: '+str(stop_event.payload.get('reason','NOT_REPORTED')))
                         break
                     with self._data_lock:
                         elapsed=run['configuration']['duration_ms']/1000-(deadline-time.monotonic())

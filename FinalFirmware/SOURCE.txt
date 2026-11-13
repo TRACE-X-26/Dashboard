@@ -1,0 +1,2 @@
+Repository: https://github.com/TRACE-X-26/Dashboard.git
+Branch: trace-x-integration-2026-10-30

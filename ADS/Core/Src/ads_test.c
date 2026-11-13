@@ -72,7 +72,9 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
   if (!t->output_enabled) { *reason=t->disabled_reason; return 0; }
   if (!strcmp(command,"ARM_TEST")) {
     if (t->running || t->power_requested) { *reason="RUNNING_OR_POWER_CHECK_ACTIVE"; return 0; }
-    if (t->supervised_required && !confirmation) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
+    /* Protected motor requests use the local zero-PWM power check.
+     * Circuit power retains its separate supervision confirmation. */
+    if (t->supervised_required && !t->power_required && !confirmation) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
     if (!t->heartbeat_seen || (uint32_t)(now-t->last_heartbeat_ms)>=HEARTBEAT_MS ||
         t->heartbeat_generation == t->arm_generation) { *reason="FRESH_HEARTBEAT_REQUIRED"; return 0; }
     if (!t->ready || !t->ready(t->context)) { *reason="INTERLOCK_OR_SENSOR_FAULT"; return 0; }
@@ -100,7 +102,7 @@ int ADS_Test_Command(ADS_Test *t, const char *command, uint32_t seq, uint32_t pw
   if (!strcmp(command,"START_TEST")) {
     t->requested_pwm=pwm;
     if (t->locked || !t->armed || t->running) { *reason="ARM_REQUIRED_OR_RUNNING"; return 0; }
-    if (t->supervised_required && !t->supervised_confirmed) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
+    if (t->supervised_required && !t->power_required && !t->supervised_confirmed) { *reason="SUPERVISED_OPERATOR_CONFIRMATION_REQUIRED"; return 0; }
     if(t->power_required && (!t->power_requested || strcmp(t->state,"POWER_READY"))) { *reason="POWER_CHECK_REQUIRED";return 0; }
     if (pwm!=t->fixed_pwm) { *reason="PWM_OUT_OF_RANGE"; return 0; }
     if (!duration || duration>t->max_duration_ms) { *reason="DURATION_OUT_OF_RANGE"; return 0; }

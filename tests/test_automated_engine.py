@@ -28,10 +28,15 @@ class AutomatedEngineTests(unittest.TestCase):
         self.assertGreater(len(result['samples']),5)
         self.assertTrue(any(e.get('type')=='event' for e in result['events']))
         self.assertEqual(self.engine.store.get(run['id'])['state'],'COMPLETED')
-    def test_hardware_fails_closed_and_registry_explains_unsupported(self):
-        with self.assertRaises(RunRejected):self.engine.start({'mode':'hardware','tests':['pwm_10']})
-        self.assertTrue(all(not p['available'] for p in self.engine.available('hardware')))
+    def test_missing_transport_fails_honestly_without_hiding_motor_procedures(self):
+        self.engine.start({'mode':'hardware','tests':['pwm_10'],'duration_ms':300})
+        run=self.wait()
+        self.assertEqual(run['state'],'DISCONNECTED')
+        self.assertIn('serial identity',run['reason'])
+        self.assertIsNone(run.get('latest_measurement'))
+        self.assertTrue(any(p['available'] for p in self.engine.available('hardware')))
         with self.assertRaises(RunRejected):self.engine.start({'tests':['continuity']})
+
     def test_cancel_and_concurrent_start(self):
         self.engine.start({'tests':['pwm_10'],'duration_ms':2000})
         with self.assertRaises(RunRejected):self.engine.start({'tests':['idle']})
@@ -84,22 +89,18 @@ class AutomatedEngineTests(unittest.TestCase):
         self.assertEqual(report['analysis_window_ms'],[3000,5000])
         self.assertEqual(report['operating_context']['load_id'],'fixture-85g')
 
-    def test_supervised_sequences_require_separate_authorizations(self):
-        from unittest.mock import patch
-        profile=dict(asset_id='MOTOR-001',operating_mode='SUPERVISED_TEST',
-                     fixed_pwm_percent=50,max_duration_ms=30000)
-        with patch('diagnostic_platform.automated_engine.load_hardware_profile',return_value=profile), \
-             patch.object(self.engine.hardware_runtime,'enabled',True):
-            with self.assertRaisesRegex(RunRejected,'fresh authorization for each'):
-                self.engine.start(dict(mode='hardware',device_id='MOTOR-001',tests=['idle','pwm_50'],
-                                       operator_authorized=True,supervised_confirmed=True))
+    def test_request_without_confirmations_enters_owner_flow(self):
+        self.engine.start(dict(mode='hardware',tests=['idle','pwm_50'],duration_ms=300))
+        run=self.wait()
+        self.assertEqual(run['state'],'DISCONNECTED')
+        self.assertIn('serial identity',run['reason'])
 
     def test_full_historical_catalog_and_approval_gates(self):
         from diagnostic_platform.test_registry import experiment_catalog,registry
         self.assertEqual([entry['test_number'] for entry in experiment_catalog()],list(range(1,14)))
         physical={entry['id']:entry for entry in registry('hardware',50,True)}
-        self.assertFalse(physical['load_response']['available'])
-        self.assertFalse(physical['power_consumption']['available'])
-        self.assertFalse(physical['pwm_100']['available'])
+        self.assertTrue(physical['load_response']['available'])
+        self.assertTrue(physical['power_consumption']['available'])
+        self.assertTrue(physical['pwm_100']['available'])
         approved={entry['id']:entry for entry in registry('hardware',50,True,['load_response'])}
         self.assertTrue(approved['load_response']['available'])

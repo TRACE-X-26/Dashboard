@@ -23,10 +23,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.mode, "simulation")
         self.assertEqual(settings.database_path, Path("/project/diagnostics.db"))
 
-    def test_hardware_mode_is_safely_disabled(self) -> None:
+    def test_hardware_mode_starts_without_circuit_power_opt_in(self) -> None:
         with patch.dict(os.environ, {"ADS_MODE": "hardware"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "Hardware mode is disabled"):
-                Settings.from_environment(Path("/project"))
+            settings=Settings.from_environment(Path("/project"))
+        self.assertEqual(settings.mode,"hardware")
+        self.assertFalse(settings.hardware_control_enabled)
 
 
 class MeasurementEnvelopeTests(unittest.TestCase):

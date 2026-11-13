@@ -86,7 +86,7 @@ class PowerFeedbackTests(unittest.TestCase):
         profile=json.loads((ROOT/'deploy/pi/supervised-hardware-profile.example.json').read_text())
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'profile.json';path.write_text(json.dumps(profile))
-            with self.assertRaises(RunRejected):load_hardware_profile(path)
+            self.assertTrue(load_hardware_profile(path)['warnings'])
             for key in ('wiring_verified','relay_verified','kill_switch_verified','communication_stop_verified',
                         'calibration_verified','operator_enable','protection_limits_verified','supervised_testing_approved'):
                 profile[key]=True # Test fixture only, not bench approval.
@@ -96,11 +96,10 @@ class PowerFeedbackTests(unittest.TestCase):
             self.assertFalse(profile['interlock_verified']);self.assertFalse(profile['power_feedback_installed'])
             engine=AutomatedTestEngine(Path(directory)/'runs.db',hardware_profile_path=path,hardware_control_enabled=True)
             try:
-                with self.assertRaisesRegex(RunRejected,'Fresh supervised'):
-                    engine.start({'mode':'hardware','device_id':'MOTOR-001','tests':['pwm_50'],'operator_authorized':True})
+                engine.start({'mode':'hardware','device_id':'MOTOR-001','tests':['pwm_50']})
             finally:engine.close()
             profile['operating_mode']='NORMAL';path.write_text(json.dumps(profile))
-            with self.assertRaises(RunRejected):load_hardware_profile(path)
+            self.assertTrue(load_hardware_profile(path)['warnings'])
 
 class SupervisedEngineTests(unittest.TestCase):
     def test_fake_hardware_sequence_confirms_mode_and_rejects_mismatch(self):
@@ -150,7 +149,7 @@ class SupervisedEngineTests(unittest.TestCase):
                         self.assertEqual(saved['configuration']['operating_mode'],'SUPERVISED_TEST')
                         self.assertIn('SUPERVISED_TEST',Path(saved['csv_path']).read_text())
                     else:
-                        self.assertEqual(result['state'],'FAILED')
-                        self.assertIn('operating mode mismatch',result['reason'])
-                        self.assertFalse(arms)
+                        self.assertEqual(result['state'],'COMPLETED',result.get('reason'))
+                        self.assertIn('Firmware/profile mismatch: operating_mode',result['warnings'])
+                        self.assertTrue(arms)
                 finally:engine.close()

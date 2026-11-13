@@ -35,8 +35,7 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
         self.assertFalse(loaded['temperature_enabled']);self.assertTrue(loaded['electrical_limits_enabled'])
         self.assertEqual(loaded['limits']['max_current'],1.5)
         profile['temperature_enabled']=True
-        with self.assertRaisesRegex(RunRejected,'Temperature has been retired'):
-            load_hardware_profile(self.write_profile(profile))
+        self.assertTrue(load_hardware_profile(self.write_profile(profile))['warnings'])
     def test_template_does_not_claim_assumed_operating_current_is_a_protection_limit(self):
         p=ROOT/'deploy/pi/hardware-profile.example.json'
         profile=json.loads(p.read_text())
@@ -44,7 +43,7 @@ class MotorDashboardIntegrationTests(unittest.TestCase):
         self.assertEqual(profile['limits']['max_current'],1.5)
         self.assertTrue(profile['electrical_limits_enabled'])
         self.assertFalse(profile['encoder']['calibrated'])
-        with self.assertRaises(RunRejected):load_hardware_profile(p)
+        self.assertTrue(load_hardware_profile(p)['warnings'])
     def test_provisional_rpm_and_disabled_temperature_are_usable_without_health_claim(self):
         device=STM32Simulator()
         connection=STM32SerialConnection(port="SIMULATION",transport_factory=lambda *_:device,device_id=device.device_id,

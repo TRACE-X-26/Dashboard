@@ -37,6 +37,7 @@ export type Recording = {
 }
 
 export type Measurement = {
+  quality?: string[];
   ina219?: Record<string, ElectricalBranch>;
   rpm_calibrated?: boolean; temperature_enabled?: boolean;
   sequence: number
@@ -216,6 +217,8 @@ export type CircuitTelemetry = {
 
 export type RegisteredTest = { id: string; name: string; available: boolean; unavailable_reason: string; pwm: number | null }
 export type AutomatedRun = {
+  warnings?: string[];
+  firmware_acknowledgments?: { command: string; result: Record<string, unknown>; protocol_frame: string }[];
   operating_mode?: string; power_feedback_installed?: boolean; power_feedback_state?: string;
   device_state?: string; faults?: string[];
   id: string; state: string; mode: 'simulation' | 'hardware'; source: string; progress: number;

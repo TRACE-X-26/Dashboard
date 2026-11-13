@@ -13,6 +13,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class OperatorMotorBuildTests(unittest.TestCase):
+    def test_explicit_downstream_operator_build_enforces_protected_start_and_stop(self):
+        cc = shutil.which('cc')
+        if not cc:
+            self.skipTest('Host C compiler unavailable')
+        with tempfile.TemporaryDirectory() as directory:
+            for scenario in ('normal', 'prepower', 'missing_protection'):
+                with self.subTest(scenario=scenario):
+                    flags = {'normal': [], 'prepower': ['-DTEST_PREPOWER=1'],
+                             'missing_protection': ['-DTEST_PROTECTION_MISSING=1']}[scenario]
+                    exe = Path(directory) / scenario
+                    subprocess.run([cc, '-std=c11', '-Wall', '-Wextra', '-Werror',
+                        '-I', str(ROOT / 'tests/hal_stub'), '-I', str(ROOT / 'ADS/Core/Inc'),
+                        '-include', str(ROOT / 'ADS/bench/downstream.operator.h'), *flags,
+                        str(ROOT / 'ADS/Core/Src/ads_motor.c'),
+                        str(ROOT / 'ADS/Core/Src/ads_circuit_relay.c'),
+                        str(ROOT / 'tests/active_low_relays_harness.c'), '-o', str(exe)],
+                        check=True, capture_output=True)
+                    subprocess.run([str(exe)], check=True)
+
     def test_make_and_cubeide_profiles_boot_stopped_and_enforce_shutdown(self):
         cc = shutil.which('cc')
         if not cc:
@@ -52,8 +71,7 @@ class OperatorMotorBuildTests(unittest.TestCase):
 
     def test_pi_operator_profile_keeps_actual_device_identity_required(self):
         profile = ROOT / 'deploy/pi/supervised-operator-profile.json'
-        with self.assertRaises(RunRejected):
-            load_hardware_profile(profile)
+        self.assertFalse(load_hardware_profile(profile).get('serial_identity'))
         data = json.loads(profile.read_text())
         self.assertFalse(data['commissioning_attestation']['independently_verified_by_agent'])
         self.assertFalse(data['encoder']['calibrated'])

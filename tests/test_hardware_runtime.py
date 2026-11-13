@@ -99,6 +99,9 @@ class BenchFixture(STM32Simulator):
             if self.fault == 'valid_zero':
                 for key in ('voltage','current','power'):
                     result['measurements'][key]['value']=0.
+            if self.fault=='optional_sensor':
+                result['encoder_calibrated']=False
+                result['measurements']['rpm'].update(value=None,valid=False)
             if self.state == 'RUNNING':
                 if self.fault == 'stale':
                     result['measurements']['current']['timestamp_ms'] = (self.tick() - 2000) & 0xffffffff
@@ -161,26 +164,22 @@ class HardwareRuntimeTests(unittest.TestCase):
     def commands(self):
         return [r.payload.get('command', 'HEARTBEAT') for f in self.fixtures for r in f.frames]
 
-    def test_permission_is_off_by_default_and_operator_confirmation_is_separate(self):
-        engine = self.engine(enabled=False)
-        with self.assertRaisesRegex(RunRejected, 'runtime disabled'):
-            engine.start(self.request())
-        self.assertFalse(self.fixtures)
-        engine = self.engine()
-        for name in ('supervised_confirmed', 'operator_authorized'):
-            request = self.request()
-            request[name] = False
-            with self.assertRaises(RunRejected):
-                engine.start(request)
-        self.assertFalse(self.fixtures)
+    def test_direct_request_needs_no_pi_opt_in_or_confirmation(self):
+        engine=self.engine(enabled=False)
+        request=self.request();request.pop('supervised_confirmed');request.pop('operator_authorized')
+        engine.start(request)
+        run=self.finish(engine)
+        self.assertEqual(run['state'],'COMPLETED',run.get('reason'))
+        self.assertIn('START_TEST',self.commands())
+        self.assertTrue(run['firmware_acknowledgments'])
 
     def test_read_only_preflight_reports_actual_firmware_blocker_without_motor_writes(self):
         engine = self.engine('disabled')
         report = engine.preflight()
         self.assertFalse(report['ready'])
         self.assertIs(report['firmware_hardware_control'], False)
-        self.assertIn('Firmware output blocked: CONTROL_DISABLED', report['reason'])
-        self.assertEqual(self.commands(), ['GET_CAPABILITIES', 'GET_STATUS'])
+        self.assertTrue(any('CONTROL_DISABLED' in w for w in report['warnings']))
+        self.assertEqual(self.commands(), ['GET_CAPABILITIES', 'GET_STATUS','READ_MEASUREMENTS','GET_STATUS'])
 
     def test_successful_preflight_then_supervised_run_and_saved_events(self):
         engine = self.engine()
@@ -200,7 +199,7 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertFalse(engine.hardware_runtime.snapshot()['ready'])
 
     def test_rejected_start_stale_current_voltage_heartbeat_and_stop_failures(self):
-        cases = {'relay_failure':'RELAY_ACTUATION_FAILED','invalid_sensor':'invalid or stale','rejected_start': 'INTERLOCK_OR_SENSOR_FAULT', 'stale': 'invalid or stale',
+        cases = {'relay_failure':'RELAY_ACTUATION_FAILED','rejected_start': 'INTERLOCK_OR_SENSOR_FAULT',
                  'heartbeat_loss': 'lockout',
                  'stop_failure': 'Stopped state', 'bad_start_ack': 'acknowledgment',
                  'missing_start_event': 'start event missing'}
@@ -230,8 +229,10 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertNotIn('ARM_TEST', self.commands())
         self.profile['electrical_limits_enabled'] = False
         self.path.write_text(json.dumps(self.profile))
-        with self.assertRaisesRegex(RunRejected, 'electrical_limits_enabled=true'):
-            engine.start(self.request())
+        engine=self.engine()
+        engine.start(self.request());run=self.finish(engine)
+        self.assertEqual(run['state'],'COMPLETED',run.get('reason'))
+        self.assertTrue(any('electrical_limits_enabled=true' in w for w in run['warnings']))
 
     def test_voltage_and_current_faults_reject_or_stop_and_confirm_shutdown(self):
         for fault in ('overcurrent','undervoltage','overvoltage','valid_zero'):
@@ -270,8 +271,8 @@ class HardwareRuntimeTests(unittest.TestCase):
         report = engine.preflight()
         self.assertTrue(report['firmware_hardware_control'])
         self.assertFalse(report['ready'])
-        self.assertIn('runtime disabled', report['reason'])
-        self.assertFalse(any(p['available'] for p in engine.available('hardware')))
+        self.assertIn('Start requests are independent', report['reason'])
+        self.assertTrue(any(p['available'] for p in engine.available('hardware')))
         self.assertTrue(set(self.commands()) <= {'GET_CAPABILITIES', 'GET_STATUS', 'READ_MEASUREMENTS'})
 
     def test_electrical_endpoints_zero_current_and_outside_range(self):
@@ -293,23 +294,34 @@ class HardwareRuntimeTests(unittest.TestCase):
             raw['measurements']['current']['value']=current
             with self.assertRaisesRegex(RunRejected,reason):HardwareRuntime.validate_sensors(self.profile,raw,100)
 
-    def test_guided_procedure_approval_survives_runtime_preflight_gating(self):
-        engine = self.engine()
-        self.assertTrue(engine.preflight()['ready'])
-        available = {p['id']: p['available'] for p in engine.available('hardware')}
-        self.assertFalse(available['steady_state'])
-        request = {**self.request(), 'tests': ['steady_state'], 'duration_ms': 5000,
-                   'load_id': 'FIXTURE_ONLY', 'condition': 'TEST_ONLY'}
-        with self.assertRaisesRegex(RunRejected, 'Unavailable procedure'):
-            engine.start(request)
-        self.profile['additional_procedures_approved'] = ['steady_state']
+    def test_metadata_and_cached_preflight_do_not_gate_guided_request(self):
+        engine=self.engine(enabled=False)
+        self.profile.update(calibration_verified=False,operator_enable=False,baselines={},max_duration_ms=100)
         self.path.write_text(json.dumps(self.profile))
-        available = {p['id']: p['available'] for p in engine.available('hardware')}
-        self.assertTrue(available['steady_state'])
-        request['duration_ms'] = 300
-        with self.assertRaisesRegex(RunRejected, 'at least five seconds'):
-            engine.start(request)
-        self.assertNotIn('ARM_TEST', self.commands())
+        engine.circuit_power.selected_branch='CIRCUIT'  # Idle UI selection only.
+        engine.start(dict(mode='hardware',tests=['steady_state'],duration_ms=300))
+        run=self.finish(engine)
+        self.assertEqual(run['state'],'COMPLETED',run.get('reason'))
+        self.assertTrue(run['warnings']);self.assertIsNone(run['health_score'])
+        self.assertEqual(engine.circuit_power.selected_branch,'MOTOR')
+
+    def test_stale_invalid_and_uncalibrated_optional_telemetry_are_warnings(self):
+        for fault,warning in [('invalid_sensor','INVALID_SENSOR_DATA'),('stale','STALE_CURRENT'),
+                              ('optional_sensor','RPM_UNCALIBRATED')]:
+            with self.subTest(fault=fault):
+                engine=self.engine(fault);engine.start(self.request());run=self.finish(engine)
+                self.assertEqual(run['state'],'COMPLETED',run.get('reason'))
+                self.assertIn(warning,run['warnings'])
+                self.assertIsNone(run['health_score'])
+
+    def test_rejection_is_preserved_beside_cleanup_acknowledgment(self):
+        engine=self.engine('rejected_start');engine.start(self.request());run=self.finish(engine)
+        replies=run['firmware_acknowledgments']
+        rejection=next(a for a in replies if a['command']=='START_TEST')
+        self.assertIs(rejection['result']['accepted'],False)
+        self.assertEqual(rejection['result']['reason'],'INTERLOCK_OR_SENSOR_FAULT')
+        self.assertIn('reply_to',rejection['protocol_frame'])
+        self.assertTrue(any(a['command']=='STOP_TEST' for a in replies))
 
     def test_emergency_stop_latches_and_never_restarts(self):
         engine = self.engine()
@@ -333,8 +345,9 @@ class HardwareRuntimeTests(unittest.TestCase):
         self.assertTrue(settings.hardware_control_enabled)
         self.assertEqual(settings.mode, 'hardware')
         with patch.dict(os.environ, {'ADS_HARDWARE_CONTROL_ENABLED': 'yes'}, clear=True):
-            with self.assertRaises(ValueError):
-                Settings.from_environment(self.root)
+            invalid=Settings.from_environment(self.root)
+            self.assertFalse(invalid.hardware_control_enabled)
+            self.assertTrue(invalid.configuration_warnings)
         self.assertFalse(self.fixtures)
 
     def test_api_exposes_read_only_preflight_and_keeps_legacy_control_simulated(self):
@@ -347,7 +360,8 @@ class HardwareRuntimeTests(unittest.TestCase):
                 engine = self.engine()
                 main.automated_engine.connection_factory = engine.connection_factory
                 initial = client.get('/api/motor/hardware/status').json()
-                self.assertTrue(initial['profile_ready'])
+                self.assertFalse(initial['profile_ready'])
+                self.assertTrue(initial['warnings'])
                 self.assertFalse(initial['hardware_control'])
                 self.assertIsNone(initial['firmware_hardware_control'])
                 report = client.post('/api/motor/hardware/preflight').json()

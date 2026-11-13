@@ -17,6 +17,7 @@ class Settings:
     serial_command_timeout: float
     hardware_control_enabled: bool = False
     hardware_profile_path: str = ""
+    configuration_warnings: tuple[str, ...] = ()
 
     @classmethod
     def from_environment(cls, root: Path) -> "Settings":
@@ -24,25 +25,18 @@ class Settings:
         if mode not in {"simulation", "replay", "hardware"}:
             raise ValueError("ADS_MODE must be simulation, replay, or hardware")
         enabled_value = os.getenv("ADS_HARDWARE_CONTROL_ENABLED", "false").strip().lower()
+        configuration_warnings=[]
         if enabled_value not in {"true", "false"}:
-            raise ValueError("ADS_HARDWARE_CONTROL_ENABLED must be true or false")
+            configuration_warnings.append("Invalid circuit-power enable flag; circuit power remains disabled")
         hardware_enabled = enabled_value == "true"
         hardware_profile = os.getenv("ADS_AUTOMATION_HARDWARE_PROFILE", "").strip()
         if hardware_profile:
             profile_path = Path(hardware_profile).expanduser()
             hardware_profile = str(profile_path if profile_path.is_absolute() else root / profile_path)
-        if mode == "hardware" and not hardware_enabled:
-            raise RuntimeError("Hardware mode is disabled: explicit ADS_HARDWARE_CONTROL_ENABLED=true required")
         if mode == "replay":
             raise RuntimeError(
                 f"{mode.title()} mode is disabled until its runtime adapter is configured and verified"
             )
-        if hardware_enabled:
-            from .automated_engine import load_hardware_profile
-            try:
-                load_hardware_profile(hardware_profile, require_motor_protection=False)
-            except (OSError, ValueError) as exc:
-                raise RuntimeError("Hardware runtime profile rejected: " + str(exc)) from exc
         database_value = os.getenv("ADS_DATABASE_PATH", "diagnostics.db").strip()
         database_path = Path(database_value)
         if not database_path.is_absolute():
@@ -80,4 +74,5 @@ class Settings:
             serial_command_timeout,
             hardware_enabled,
             hardware_profile,
+            tuple(configuration_warnings),
         )

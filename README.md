@@ -6,7 +6,7 @@ Current motor/circuit station and deployment: [branch-power update](docs/BRANCH_
 
 # Software-Defined Diagnostic Platform
 
-Current STM32–Pi runtime: [hardware permission, read-only preflight, status meanings and data-preserving deployment](docs/STM32_PI_AUTOMATED_RUNTIME.md). Physical Pi commands default off via ADS_HARDWARE_CONTROL_ENABLED=false. ADS_MODE=simulation can retain the existing demos while the separately authorized automated engine is used; actual firmware capability and live protections must pass before ARM.
+Current motor runtime: [direct Start/Stop requests, advisory configuration warnings, retained STM32 protections, and deployment](docs/SOFTWARE_PREFLIGHT_REMOVAL.md). Motor requests no longer depend on cached preflight, Pi enable flags, repeated confirmations, or optional sensor calibration. STM32 electrical protection, physical interlocks, heartbeat shutdown, and local deadlines remain mandatory. ADS_HARDWARE_CONTROL_ENABLED continues to control circuit-power authorization; simulation demos remain separate.
 
 Current motor-data integration, temperature removal, supported procedures and Pi update steps are documented in [the integration guide](docs/MOTOR_DATA_INTEGRATION.md) and [completion report](docs/COMPLETION_REPORT.md).
 

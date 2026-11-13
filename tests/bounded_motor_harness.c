@@ -126,8 +126,8 @@ int main(int argc,char **argv)
   if(argc==1) { scenarios(); return 0; }
   ADS_Test t,circuit; ADS_Protocol p;
   ADS_Test_Init(&t,10,1000,strcmp(argv[1],"disabled")!=0,ready,start,stop,NULL);
-  if(!strcmp(argv[1],"downstream")) { t.power_required=1;t.prepare_power=prepare_power;t.power_state=power_state; }
-  t.supervised_required=!strcmp(argv[1],"supervised");
+  if(!strcmp(argv[1],"downstream") || !strcmp(argv[1],"downstream-supervised")) { t.power_required=1;t.prepare_power=prepare_power;t.power_state=power_state; }
+  t.supervised_required=!strcmp(argv[1],"supervised") || !strcmp(argv[1],"downstream-supervised");
   ADS_Protocol_Init(&p,transmit,tick,NULL); ADS_Protocol_SetMotorTest(&p,&t);
   if(!strcmp(argv[1],"crc")) p.require_crc=1;
   if(!strcmp(argv[1],"circuit") || !strcmp(argv[1],"circuit-disabled")) {

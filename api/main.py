@@ -654,22 +654,17 @@ def station_circuit_csv(session_id: str):
 
 @app.get('/api/motor/hardware/status')
 def hardware_motor_status():
-    import json
     from diagnostic_platform.automated_engine import load_hardware_profile
-    engine=test_engine();profile={};reason=''
-    try:
-        if engine.hardware_profile_path:
-            profile=json.loads(Path(engine.hardware_profile_path).read_text())
-            if not isinstance(profile,dict):profile={}
-        load_hardware_profile(engine.hardware_profile_path)
-        ready=True
-    except (OSError,ValueError) as exc:
-        reason=str(exc);ready=False
+    engine=test_engine()
+    profile=load_hardware_profile(engine.hardware_profile_path)
+    profile['warnings']+=list(settings.configuration_warnings)
+    ready=not profile.get('warnings')
+    reason='; '.join(profile.get('warnings',[]))
     active=engine.snapshot()
     preflight=engine.hardware_runtime.snapshot()
-    return dict(profile_ready=ready,reason=reason,asset_id=profile.get('asset_id','MOTOR-001'),
+    return dict(profile_ready=ready,reason=reason,warnings=profile.get('warnings',[]),asset_id=profile.get('asset_id','MOTOR-001'),
                 hardware_control_enabled=engine.hardware_runtime.enabled,
-                hardware_control=ready and preflight['ready'],
+                hardware_control=preflight['ready'],
                 firmware_hardware_control=preflight.get('firmware_hardware_control'),
                 preflight=preflight,
                 operating_mode=profile.get('operating_mode','NORMAL'),

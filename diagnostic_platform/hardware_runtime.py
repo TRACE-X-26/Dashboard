@@ -27,10 +27,12 @@ class HardwareRuntime:
         if not self.enabled:
             raise RunRejected('Hardware runtime disabled: explicitly set ADS_HARDWARE_CONTROL_ENABLED=true after commissioning')
 
-    def connection(self, profile, *, control=False):
-        if control:
+    def connection(self, profile, *, control=False, motor_request=False):
+        if control and not motor_request:
             self.require_permission()
         from serial.tools import list_ports
+        if not profile.get('serial_identity'):
+            raise ConnectionError('STM32 USB serial identity is not configured; select the intended board')
         matches = [p for p in list_ports.comports()
                    if p.serial_number == profile['serial_identity']]
         if len(matches) != 1:
@@ -40,6 +42,35 @@ class HardwareRuntime:
                                      command_timeout=self.command_timeout,
                                      device_id=profile['device_id'], require_crc=True,
                                      allow_motor_control=control)
+
+    @staticmethod
+    def validate_motor_protections(caps):
+        """Validate safety capabilities, independent of Pi commissioning metadata."""
+        if caps.get('electrical_limits_enabled') is not True:
+            raise RunRejected('STM32 electrical-limit policy mismatch: protections required')
+        required={'PREPARE_TEST_POWER','ARM_TEST','SET_PWM','START_TEST','STOP_TEST',
+                  'EMERGENCY_STOP','GET_STATUS','GET_CAPABILITIES','READ_MEASUREMENTS'}
+        commands=caps.get('commands')
+        if not isinstance(commands,list) or not required.issubset(commands):
+            raise RunRejected('Required protected motor commands are missing')
+        if (caps.get('power_check_required') is not True or
+                caps.get('supply_sensing')!='DOWNSTREAM_POWER_CHECK' or
+                caps.get('heartbeat_timeout_ms')!=2000):
+            raise RunRejected('STM32 power-check / communication-loss protection contract mismatch')
+        if type(caps.get('max_duration_ms')) is not int or not 0<caps['max_duration_ms']<=30000:
+            raise RunRejected('STM32 maximum test duration is missing or unsafe')
+        for key,expected in [('min_voltage_mv',10000),('max_voltage_mv',14000),('max_current_ma',1500)]:
+            if type(caps.get(key)) is not int or caps[key]!=expected:
+                raise RunRejected('STM32 protection limit mismatch: '+key)
+
+    @staticmethod
+    def motor_contract_warnings(profile, caps):
+        warnings=[]
+        for key in ('firmware_version','operating_mode','fixed_pwm_percent','max_duration_ms'):
+            if caps.get(key)!=profile.get(key):warnings.append('Firmware/profile mismatch: '+key)
+        if caps.get('hardware_control') is not True:
+            warnings.append('STM32 output permission: '+str(caps.get('hardware_block_reason','NOT_REPORTED')))
+        return warnings
 
     @staticmethod
     def validate_contract(profile, caps, status, duration):
@@ -140,5 +171,5 @@ class HardwareRuntime:
         report['stale'] = self.checked_at == 0 or time.monotonic() - self.checked_at > 15
         report['ready'] = report['ready'] and self.enabled and not report['stale']
         if report['stale'] and self.last_preflight:
-            report['reason'] = 'Preflight snapshot expired; repeat before testing'
+            report['reason'] = 'Snapshot expired; Start remains available; STM32 enforces protections'
         return report

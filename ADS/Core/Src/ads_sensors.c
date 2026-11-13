@@ -165,11 +165,12 @@ int ADS_Sensors_Ready(void)
 {
   ADS_Sample s[5]; ADS_Sensors_Acquire(s,NULL);
   if(!ADS_INA219_CALIBRATED) return 0;
-  if(ADS_TEMPERATURE_ENABLED && !ADS_TEMPERATURE_CALIBRATED) return 0;
-  if(!s[0].valid || !s[1].valid || !s[4].valid || (ADS_TEMPERATURE_ENABLED && !s[3].valid)) return 0;
+  if(!s[0].valid || !s[1].valid) return 0;
   if(!ADS_PROTECTION_LIMITS_VERIFIED) return 0;
   if(ADS_Protection_Electrical(s,HAL_GetTick())) return 0;
-  return !ADS_TEMPERATURE_ENABLED || (ADS_MOTOR_MAX_TEMPERATURE_MC>0 && s[3].milli_value<ADS_MOTOR_MAX_TEMPERATURE_MC);
+  /* Optional temperature cannot prevent acquisition; retain any valid thermal trip. */
+  return !ADS_TEMPERATURE_ENABLED || !s[3].valid || !ADS_TEMPERATURE_CALIBRATED ||
+    (ADS_MOTOR_MAX_TEMPERATURE_MC>0 && s[3].milli_value<ADS_MOTOR_MAX_TEMPERATURE_MC);
 }
 
 /* Strong board implementation; the output driver fails closed if absent. */
@@ -178,7 +179,7 @@ int ADS_Motor_ProtectionReady(void) { return ADS_Sensors_Ready(); }
 int ADS_Motor_IdleReady(void)
 {
   ADS_Sample s[5];ADS_Sensors_Acquire(s,0);
-  if(!ADS_INA219_CALIBRATED || !ADS_PROTECTION_LIMITS_VERIFIED || !s[4].valid || s[4].milli_value!=0) return 0;
+  if(!ADS_INA219_CALIBRATED || !ADS_PROTECTION_LIMITS_VERIFIED || (ADS_ENCODER_CALIBRATED && s[4].valid && s[4].milli_value!=0)) return 0;
   /* Before the relay closes, zero voltage is expected, not a range pass. */
   for(unsigned i=0;i<3;i++) if(!s[i].valid || s[i].timestamp_ms!=s[0].timestamp_ms) return 0;
   int64_t current=s[1].milli_value;if(current<0)current=-current;

@@ -42,11 +42,8 @@ def registry(mode='simulation', fixed_pwm=None, ready=False, approved_procedures
     out=[]
     for p in PROCEDURES:
         reason=p.reason
-        if mode=='hardware' and not reason:
-            if not ready: reason='Hardware commissioning profile and operator authorization required.'
-            elif p.pwm not in (0,fixed_pwm): reason='Not the single bench-approved fixed duty.'
-            elif p.requires_setup and p.id not in approved_procedures:
-                reason='Individual procedure approval required in hardware profile.'
+        if mode=='hardware' and not reason and not ready:
+            reason='Hardware routing has not been requested.'
         out.append({**asdict(p),'available':not reason,'unavailable_reason':reason})
     return out
 

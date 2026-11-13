@@ -41,7 +41,13 @@ class AutomatedApiTests(unittest.TestCase):
         self.assertFalse(status['profile_ready'])
         self.assertIsNone(status['active_run'])
     def test_unavailable_hardware_and_bad_configuration(self):
-        self.assertEqual(self.client.post('/api/automated/runs',json={'mode':'hardware','tests':['pwm_10']}).status_code,409)
+        reply=self.client.post('/api/automated/runs',json={'mode':'hardware','tests':['pwm_10']})
+        self.assertEqual(reply.status_code,201)
+        for _ in range(100):
+            run=self.client.get('/api/automated/runs/'+reply.json()['id']).json()
+            if run['ended_at']:break
+            time.sleep(.01)
+        self.assertEqual(run['state'],'DISCONNECTED')
         self.assertEqual(self.client.post('/api/automated/runs',json={'tests':['continuity']}).status_code,409)
         self.assertEqual(self.client.post('/api/automated/runs',json={'duration_ms':-1,'tests':['idle']}).status_code,422)
         self.assertEqual(self.client.get('/api/automated/runs/missing').status_code,404)
@@ -77,5 +83,5 @@ class AutomatedApiTests(unittest.TestCase):
             'operator_authorized':True,'supervised_confirmed':'true'})
         self.assertEqual(response.status_code,422)
         status=self.client.get('/api/motor/hardware/status').json()
-        self.assertEqual(status['operating_mode'],'NORMAL')
+        self.assertEqual(status['operating_mode'],'UNKNOWN')
         self.assertFalse(status['profile_ready'])
